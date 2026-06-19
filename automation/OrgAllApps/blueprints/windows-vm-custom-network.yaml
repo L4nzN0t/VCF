@@ -1,6 +1,7 @@
 formatVersion: 2
-name: vcf-902-vm-lifecycle
+name: vcf-902-windows-vm-custom-network
 version: 1
+
 inputs:
   vmName:
     type: string
@@ -9,12 +10,14 @@ inputs:
     minLength: 3
     maxLength: 15
     pattern: ^[a-z][a-z0-9-]{1,13}[a-z0-9]$
+
   application:
     type: string
     title: Application
     minLength: 2
     maxLength: 32
     pattern: ^[A-Za-z0-9][A-Za-z0-9_-]*$
+
   environment:
     type: string
     title: Environment
@@ -26,6 +29,7 @@ inputs:
         const: test
       - title: Production
         const: prod
+
   location:
     type: string
     title: vCenter / Workload Domain
@@ -36,20 +40,62 @@ inputs:
         const: WL1
       - title: Lab05 Wld-02
         const: WL2
+
   namespaceName:
     type: string
     title: Namespace
     description: Existing Supervisor namespace used as the deployment target.
     $data: /data/namespaces?projectId={{project}}
+
+  vpcName:
+    type: string
+    title: VPC
+    description: VPC associated with the selected namespace. Used by post-deployment validation, IPAM, DNS, and tagging automation.
+    enum:
+      - vpc-cbre
+    default: vpc-cbre
+
+  subnetName:
+    type: string
+    title: Subnet
+    description: Subnet or segment associated with the selected namespace/VPC.
+
+  useStaticIp:
+    type: boolean
+    title: Request Static IP
+    default: false
+
+  requestedIpAddress:
+    type: string
+    title: Requested IP Address
+    description: Optional. Show this field in the custom form only when Request Static IP is enabled.
+    default: ''
+    pattern: '^$|^((25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})(\.|$)){4}$'
+
+  subnetCidr:
+    type: string
+    title: Subnet CIDR
+    description: Optional CIDR for validation and DNS/IPAM automation.
+    default: ''
+
+  gatewayAddress:
+    type: string
+    title: Gateway
+    description: Optional gateway address for validation and documentation.
+    default: ''
+    pattern: '^$|^((25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})(\.|$)){4}$'
+
   storageClass:
     type: string
     title: Storage Class
     $data: /data/storageclasses?namespace={{namespaceName}}
+
   vmClass:
     type: string
     title: Virtual Machine Size
     description: Select an allowed VM class for the target namespace.
     $data: /data/virtualmachineclasses?namespace={{namespaceName}}
+
   windowsImage:
     type: string
     title: Windows Image
@@ -57,6 +103,7 @@ inputs:
     oneOf:
       - title: Windows Server 2022
         const: vmi-3a69168e05f07ca5a
+
   domainName:
     type: string
     title: DNS / AD Domain
@@ -66,33 +113,46 @@ inputs:
         const: lab.ncl
       - title: lanz.lab.ncl
         const: lanz.lab.ncl
+
   joinDomain:
     type: boolean
     title: Join AD Domain
     default: true
+
   adOuPath:
     type: string
     title: AD OU Path
     default: OU=Servers,OU=LAB,DC=lab,DC=ncl
     description: Distinguished name used by post-deployment AD automation if the image bootstrap cannot place the object.
+
   dnsZone:
     type: string
     title: DNS Zone
     default: lab.ncl
+
   ownerGroup:
     type: string
     title: Owner Group
     default: platform
+
   exposeRemoteAccess:
     type: boolean
     title: Expose Remote Access Load Balancer
     default: false
+
+  remoteAccessSourceCidr:
+    type: string
+    title: Remote Access Source CIDR
+    description: Optional. Use this in NSX/firewall post-deployment automation to restrict external access.
+    default: ''
+
   requestedLeaseDays:
     type: integer
     title: Lease Days
     default: 30
     minimum: 1
     maximum: 365
+
 variables:
   hostname: ${to_lower(input.vmName)}
   namespace: ${input.namespaceName}
@@ -114,13 +174,22 @@ variables:
     vcf.vm/domainName: ${input.domainName}
     vcf.vm/dnsZone: ${input.dnsZone}
     vcf.vm/adOuPath: ${input.adOuPath}
+    vcf.vm/network.vpc: ${input.vpcName}
+    vcf.vm/network.subnet: ${input.subnetName}
+    vcf.vm/network.ipAssignment: ${input.useStaticIp ? 'static':'automatic'}
+    vcf.vm/network.requestedIpAddress: ${input.requestedIpAddress}
+    vcf.vm/network.subnetCidr: ${input.subnetCidr}
+    vcf.vm/network.gatewayAddress: ${input.gatewayAddress}
+    vcf.vm/network.remoteAccessSourceCidr: ${input.remoteAccessSourceCidr}
     vcf.vm/requestedLeaseDays: ${format('%d', input.requestedLeaseDays)}
+
 resources:
   SupervisorNamespace:
     type: CCI.Supervisor.Namespace
     properties:
       name: ${variable.namespace}
       existing: true
+
   RemoteAccessService:
     type: CCI.Supervisor.Resource
     properties:
@@ -133,6 +202,8 @@ resources:
           name: svc-${variable.hostname}
           namespace: ${variable.namespace}
           labels: ${variable.commonLabels}
+          annotations:
+            vcf.vm/network.remoteAccessSourceCidr: ${input.remoteAccessSourceCidr}
         spec:
           selector:
             app.kubernetes.io/instance: ${variable.hostname}
@@ -146,6 +217,7 @@ resources:
               port: 22
               protocol: TCP
               targetPort: 22
+
   BootstrapSecret:
     type: CCI.Supervisor.Resource
     properties:
@@ -161,6 +233,7 @@ resources:
         stringData:
           localAdminPassword: ${secret.windows-bootstrap-password}
           domainAdminPassword: ${secret.ad-join-password}
+
   WindowsVM:
     type: CCI.Supervisor.Resource
     dependsOn:
@@ -194,6 +267,11 @@ resources:
               - ${variable.dnsServer02}
             searchDomains:
               - ${input.domainName}
+            interfaces:
+              - name: eth0
+                network:
+                  name: subnet-cbre-03
+                  kind: Subnet
           bootstrap:
             sysprep:
               sysprep:
@@ -212,48 +290,70 @@ resources:
                   domainAdminPassword:
                     name: vm-${variable.hostname}-bootstrap
                     key: domainAdminPassword
+
 outputs:
   hostname:
     value: ${variable.hostname}
+  fqdn:
+    value: ${variable.hostname}.${input.domainName}
   namespace:
     value: ${variable.namespace}
+  requestedVpc:
+    value: ${input.vpcName}
+  requestedSubnet:
+    value: ${input.subnetName}
+  requestedIpAddress:
+    value: ${input.useStaticIp ? input.requestedIpAddress:'automatic'}
+  guestPrimaryIp:
+    value: ${resource.WindowsVM.object.status.network.primaryIP4}
   remoteAccessServiceName:
     value: ${input.exposeRemoteAccess ? 'svc-' + variable.hostname:'not-exposed'}
   remoteAccessExternalIp:
     value: ${input.exposeRemoteAccess ? resource.RemoteAccessService[0].object.status.loadBalancer.ingress[0].ip:'not-exposed'}
-
-postDeploymentPayload:
-  value:
-    vmName: ${variable.hostname}
-    fqdn: ${variable.hostname}.${input.domainName}
-    namespace: ${variable.namespace}
-    osType: windows
-    environment: ${input.environment}
-    application: ${input.application}
-    requestedBy: ${env.requestedBy}
-    domainName: ${input.domainName}
-    domainJoinRequested: ${input.joinDomain}
-    adOuPath: ${input.adOuPath}
-    dnsZone: ${input.dnsZone}
-    vmClass: ${input.vmClass}
-    storageClass: ${input.storageClass}
-    remoteAccessEnabled: ${input.exposeRemoteAccess}
-    remoteAccessServiceName: ${input.exposeRemoteAccess ? 'svc-' + variable.hostname:'not-exposed'}
-    remoteAccessExternalIp: ${input.exposeRemoteAccess ? resource.RemoteAccessService[0].object.status.loadBalancer.ingress[0].ip:'not-exposed'}
-    labelPatch:
-      vcf.vm/loadBalancerExternalIp: ${input.exposeRemoteAccess ? resource.RemoteAccessService[0].object.status.loadBalancer.ingress[0].ip:'not-exposed'}
-    vCenterTags:
-      app.kubernetes.io/name: vm-lifecycle
-      app.kubernetes.io/instance: ${variable.hostname}
-      vcf.vm/vmName: ${variable.hostname}
-      vcf.vm/application: ${input.application}
-      vcf.vm/environment: ${input.environment}
-      vcf.vm/owner: ${split(env.requestedBy, '@')[0]}
+  postDeploymentPayload:
+    value:
+      vmName: ${variable.hostname}
+      fqdn: ${variable.hostname}.${input.domainName}
+      namespace: ${variable.namespace}
+      osType: windows
+      environment: ${input.environment}
+      application: ${input.application}
+      requestedBy: ${env.requestedBy}
+      domainName: ${input.domainName}
+      domainJoinRequested: ${input.joinDomain}
+      adOuPath: ${input.adOuPath}
+      dnsZone: ${input.dnsZone}
+      vmClass: ${input.vmClass}
+      storageClass: ${input.storageClass}
+      network:
+        vpcName: ${input.vpcName}
+        subnetName: ${input.subnetName}
+        ipAssignment: ${input.useStaticIp ? 'static':'automatic'}
+        requestedIpAddress: ${input.requestedIpAddress}
+        subnetCidr: ${input.subnetCidr}
+        gatewayAddress: ${input.gatewayAddress}
+        guestPrimaryIp: ${resource.WindowsVM.object.status.network.primaryIP4}
+      remoteAccessEnabled: ${input.exposeRemoteAccess}
+      remoteAccessSourceCidr: ${input.remoteAccessSourceCidr}
+      remoteAccessServiceName: ${input.exposeRemoteAccess ? 'svc-' + variable.hostname:'not-exposed'}
+      remoteAccessExternalIp: ${input.exposeRemoteAccess ? resource.RemoteAccessService[0].object.status.loadBalancer.ingress[0].ip:'not-exposed'}
+      labelPatch:
+        vcf.vm/primaryIp: ${resource.WindowsVM.object.status.network.primaryIP4}
+        vcf.vm/loadBalancerExternalIp: ${input.exposeRemoteAccess ? resource.RemoteAccessService[0].object.status.loadBalancer.ingress[0].ip:'not-exposed'}
+      vCenterTags:
+        app.kubernetes.io/name: vm-lifecycle
+        app.kubernetes.io/instance: ${variable.hostname}
+        vcf.vm/vmName: ${variable.hostname}
+        vcf.vm/application: ${input.application}
+        vcf.vm/environment: ${input.environment}
+        vcf.vm/owner: ${split(env.requestedBy, '@')[0]}
+        vcf.vm/vpc: ${input.vpcName}
+        vcf.vm/subnet: ${input.subnetName}
   __deploymentOverview:
     value: |-
-      ## 🖥️ Virtual Machine Deployment
+      ## Windows VM Deployment
 
-      Your virtual machine deployment completed successfully.
+      Your Windows virtual machine deployment completed successfully.
 
       ---
 
@@ -300,24 +400,59 @@ postDeploymentPayload:
 
       ---
 
-      #### Network and Access
+      #### Network Selection
 
       <table class="table table-vertical table-compact">
+        <tr>
+          <th class="left">VPC</th>
+          <td><code>${input.vpcName}</code></td>
+        </tr>
+        <tr>
+          <th class="left">Subnet</th>
+          <td><code>${input.subnetName}</code></td>
+        </tr>
+        <tr>
+          <th class="left">IP Assignment</th>
+          <td>${input.useStaticIp ? 'static':'automatic'}</td>
+        </tr>
+        <tr>
+          <th class="left">Requested IP</th>
+          <td><code>${input.useStaticIp ? input.requestedIpAddress:'automatic'}</code></td>
+        </tr>
+        <tr>
+          <th class="left">Guest Primary IP</th>
+          <td><code>${resource.WindowsVM.object.status.network.primaryIP4}</code></td>
+        </tr>
+        <tr>
+          <th class="left">Subnet CIDR</th>
+          <td><code>${input.subnetCidr}</code></td>
+        </tr>
+        <tr>
+          <th class="left">Gateway</th>
+          <td><code>${input.gatewayAddress}</code></td>
+        </tr>
         <tr>
           <th class="left">DNS Domain</th>
           <td>${input.domainName}</td>
         </tr>
         <tr>
-          <th class="left">DNS Zone</th>
-          <td>${input.dnsZone}</td>
-        </tr>
-        <tr>
           <th class="left">Name Servers</th>
           <td><code>${variable.dnsServer01}</code>, <code>${variable.dnsServer02}</code></td>
         </tr>
+      </table>
+
+      ---
+
+      #### Remote Access
+
+      <table class="table table-vertical table-compact">
         <tr>
-          <th class="left">Remote Access</th>
+          <th class="left">External Access</th>
           <td>${input.exposeRemoteAccess ? 'Enabled':'Disabled'}</td>
+        </tr>
+        <tr>
+          <th class="left">Allowed Source CIDR</th>
+          <td><code>${input.remoteAccessSourceCidr}</code></td>
         </tr>
         <tr>
           <th class="left">Load Balancer Service</th>
@@ -330,10 +465,6 @@ postDeploymentPayload:
         <tr>
           <th class="left">RDP</th>
           <td><code>${input.exposeRemoteAccess ? resource.RemoteAccessService[0].object.status.loadBalancer.ingress[0].ip + ':3389':'internal network only'}</code></td>
-        </tr>
-        <tr>
-          <th class="left">SSH</th>
-          <td><code>${input.exposeRemoteAccess ? resource.RemoteAccessService[0].object.status.loadBalancer.ingress[0].ip + ':22':'internal network only'}</code></td>
         </tr>
       </table>
 
@@ -355,6 +486,10 @@ postDeploymentPayload:
           <td>Handled by post-deployment automation</td>
         </tr>
         <tr>
+          <th class="left">VM IP Label</th>
+          <td><code>vcf.vm/primaryIp</code></td>
+        </tr>
+        <tr>
           <th class="left">LB IP Label</th>
           <td><code>vcf.vm/loadBalancerExternalIp</code></td>
         </tr>
@@ -364,4 +499,4 @@ postDeploymentPayload:
         </tr>
       </table>
 
-      > If the load balancer IP is blank, refresh the deployment after the Supervisor load balancer controller assigns an external address.
+      > VPC, subnet, requested IP, source CIDR, labels, and vCenter tags are passed as deployment intent. Use post-deployment automation to validate IP allocation, patch labels, create DNS records, restrict access, and apply vCenter tags.
