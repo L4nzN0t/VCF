@@ -135,7 +135,6 @@ variables:
     vcf.vm/domainName: ${input.domainName}
     vcf.vm/dnsZone: ${input.dnsZone}
     vcf.vm/adOuPath: ${input.adOuPath}
-    vcf.vm/vCenterFolder: ${input.vCenterFolder}
     vcf.vm/requestedLeaseDays: ${format('%d', input.requestedLeaseDays)}
 resources:
   SupervisorNamespace:
