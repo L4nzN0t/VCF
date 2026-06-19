@@ -1,0 +1,258 @@
+formatVersion: 2
+name: vcf-902-vm-lifecycle
+version: 1
+inputs:
+  osType:
+    type: string
+    title: Operating System
+    default: windows
+    oneOf:
+      - title: Windows Server
+        const: windows
+      - title: Linux
+        const: linux
+  vmName:
+    type: string
+    title: Virtual Machine Name
+    description: Lowercase DNS-safe name. Windows NetBIOS names should stay at 15 characters or less.
+    minLength: 3
+    maxLength: 15
+    pattern: ^[a-z][a-z0-9-]{1,13}[a-z0-9]$
+  application:
+    type: string
+    title: Application
+    minLength: 2
+    maxLength: 32
+    pattern: ^[A-Za-z0-9][A-Za-z0-9_-]*$
+  environment:
+    type: string
+    title: Environment
+    default: dev
+    oneOf:
+      - title: Development
+        const: dev
+      - title: Test
+        const: test
+      - title: Production
+        const: prod
+  location:
+    type: string
+    title: vCenter / Workload Domain
+    oneOf:
+      - title: Lab05 Mgmt-01
+        const: MGMT
+      - title: Lab05 Wld-01
+        const: WL1
+      - title: Lab05 Wld-02
+        const: WL2
+  namespaceName:
+    type: string
+    title: Namespace
+    description: Existing Supervisor namespace used as the deployment target.
+    $data: /data/namespaces?projectId={{project}}
+  storageClass:
+    type: string
+    title: Storage Class
+    $data: /data/storageclasses?namespace={{namespaceName}}
+  vmClass:
+    type: string
+    title: Virtual Machine Size
+    description: Select an allowed VM class for the target namespace.
+    $data: /data/virtualmachineclasses?namespace={{namespaceName}}
+  windowsImage:
+    type: string
+    title: Windows Image
+    default: vmi-3a69168e05f07ca5a
+    oneOf:
+      - title: Windows Server 2022
+        const: vmi-3a69168e05f07ca5a
+  linuxImage:
+    type: string
+    title: Linux Image
+    default: ubuntu-2204
+    oneOf:
+      - title: Ubuntu Server 22.04
+        const: ubuntu-2204
+      - title: RHEL 9
+        const: rhel-9
+  domainName:
+    type: string
+    title: DNS / AD Domain
+    default: lab.ncl
+    oneOf:
+      - title: lab.ncl
+        const: lab.ncl
+      - title: lanz.lab.ncl
+        const: lanz.lab.ncl
+  joinDomain:
+    type: boolean
+    title: Join AD Domain
+    default: true
+  adOuPath:
+    type: string
+    title: AD OU Path
+    default: OU=Servers,DC=lab,DC=ncl
+    description: Distinguished name used by post-deployment AD automation if the image bootstrap cannot place the object.
+  dnsZone:
+    type: string
+    title: DNS Zone
+    default: lab.ncl
+  vCenterFolder:
+    type: string
+    title: vCenter VM Folder
+    default: /Workloads/Servers
+    description: Consumed by a post-deployment extensibility subscription or vRO workflow.
+  ownerGroup:
+    type: string
+    title: Owner Group
+    default: platform
+  exposeRemoteAccess:
+    type: boolean
+    title: Expose Remote Access Load Balancer
+    default: false
+  requestedLeaseDays:
+    type: integer
+    title: Lease Days
+    default: 30
+    minimum: 1
+    maximum: 365
+variables:
+  hostname: ${to_lower(input.vmName)}
+  namespace: ${input.namespaceName}
+  storageClass: ${input.storageClass}
+  dnsServer01: 10.255.50.24
+  dnsServer02: 10.255.50.26
+  svcAccount: sa-svc-vcfa
+  commonLabels:
+    app.kubernetes.io/name: vm-lifecycle
+    app.kubernetes.io/instance: ${to_lower(input.vmName)}
+    vcf.vm/application: ${input.application}
+    vcf.vm/environment: ${input.environment}
+    vcf.vm/owner: ${split(env.requestedBy, '@')[0]}
+  commonAnnotations:
+    vcf.vm/requestedBy: ${env.requestedBy}
+    vcf.vm/location: ${input.location}
+    vcf.vm/domainName: ${input.domainName}
+    vcf.vm/dnsZone: ${input.dnsZone}
+    vcf.vm/adOuPath: ${input.adOuPath}
+    vcf.vm/vCenterFolder: ${input.vCenterFolder}
+    vcf.vm/requestedLeaseDays: ${format('%d', input.requestedLeaseDays)}
+resources:
+  SupervisorNamespace:
+    type: CCI.Supervisor.Namespace
+    properties:
+      name: ${variable.namespace}
+      existing: true
+  RemoteAccessService:
+    type: CCI.Supervisor.Resource
+    properties:
+      count: ${input.exposeRemoteAccess ? 1:0}
+      context: ${resource.SupervisorNamespace.id}
+      wait:
+        conditions:
+          - type: Ready
+            status: 'True'
+      manifest:
+        apiVersion: vmoperator.vmware.com/v1alpha3
+        kind: VirtualMachineService
+        metadata:
+          name: svc-${variable.hostname}
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+        spec:
+          selector:
+            app.kubernetes.io/instance: ${variable.hostname}
+          type: LoadBalancer
+          ports:
+            - name: rdp
+              port: 3389
+              protocol: TCP
+              targetPort: 3389
+            - name: ssh
+              port: 22
+              protocol: TCP
+              targetPort: 22
+  BootstrapSecret:
+    type: CCI.Supervisor.Resource
+    properties:
+      context: ${resource.SupervisorNamespace.id}
+      manifest:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: vm-${variable.hostname}-bootstrap
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+        type: Opaque
+        stringData:
+          localAdminPassword: ${secret.windows-bootstrap-password}
+          domainAdminPassword: ${secret.ad-join-password}
+  WindowsVM:
+    type: CCI.Supervisor.Resource
+    dependsOn:
+      - BootstrapSecret
+    properties:
+      count: ${input.osType == 'windows' ? 1:0}
+      context: ${resource.SupervisorNamespace.id}
+      wait:
+        conditions:
+          - type: VirtualMachineCreated
+            status: 'True'
+          - type: GuestCustomization
+            status: 'True'
+      manifest:
+        apiVersion: vmoperator.vmware.com/v1alpha3
+        kind: VirtualMachine
+        metadata:
+          name: vm-${variable.hostname}
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+          annotations: ${variable.commonAnnotations}
+        spec:
+          className: ${input.vmClass}
+          imageName: ${input.windowsImage}
+          storageClass: ${variable.storageClass}
+          powerState: PoweredOn
+          network:
+            hostName: ${variable.hostname}
+            domainName: ${input.domainName}
+            nameservers:
+              - ${variable.dnsServer01}
+              - ${variable.dnsServer02}
+            searchDomains:
+              - ${input.domainName}
+          bootstrap:
+            sysprep:
+              sysprep:
+                guiUnattended:
+                  autoLogon: false
+                  password:
+                    name: vm-${variable.hostname}-bootstrap
+                    key: localAdminPassword
+                userData:
+                  fullName: ${split(env.requestedBy, '@')[0]}
+                  orgName: VMware
+                  computerName: ${variable.hostname}
+                identification:
+                  joinDomain: ${input.joinDomain ? input.domainName:''}
+                  domainAdmin: ${input.joinDomain ? variable.svcAccount:''}
+                  domainAdminPassword:
+                    name: vm-${variable.hostname}-bootstrap
+                    key: domainAdminPassword
+outputs:
+  hostname:
+    value: ${variable.hostname}
+  namespace:
+    value: ${variable.namespace}
+  __deploymentOverview:
+    value: |-
+      ## VM Deployment
+
+      **Name:** ${variable.hostname}
+      **OS:** ${input.osType}
+      **Namespace:** ${variable.namespace}
+      **Domain:** ${input.domainName}
+      **VM Class:** ${input.vmClass}
+      **Storage Class:** ${input.storageClass}
+
+      Post-deployment automation should use the deployment inputs, VM annotations, and the `postDeploymentPayload` output to create DNS records, move the VM to `${input.vCenterFolder}`, apply tags, and verify AD placement.
