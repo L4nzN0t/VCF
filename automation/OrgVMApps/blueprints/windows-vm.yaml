@@ -1,0 +1,397 @@
+formatVersion: 2
+name: vcf-902-org-vm-apps-windows-vm
+version: 1
+
+inputs:
+  vmName:
+    type: string
+    title: Virtual Machine Name
+    description: Lowercase DNS-safe name. Windows NetBIOS names should stay at 15 characters or less.
+    minLength: 3
+    maxLength: 15
+    pattern: ^[a-z][a-z0-9-]{1,13}[a-z0-9]$
+
+  application:
+    type: string
+    title: Application
+    minLength: 2
+    maxLength: 32
+    pattern: ^[A-Za-z0-9][A-Za-z0-9_-]*$
+
+  environment:
+    type: string
+    title: Environment
+    default: dev
+    oneOf:
+      - title: Development
+        const: dev
+      - title: Test
+        const: test
+      - title: Production
+        const: prod
+
+  location:
+    type: string
+    title: vCenter / Workload Domain
+    description: Placement intent. The matching Cloud Zone must be tagged with vmapps.location:<value>.
+    oneOf:
+      - title: Lab05 Mgmt-01
+        const: mgmt
+      - title: Lab05 Wld-01
+        const: wl1
+      - title: Lab05 Wld-02
+        const: wl2
+
+  network:
+    type: string
+    title: Network
+    description: Network intent. The matching network profile or existing network must be tagged with vmapps.network:<value>.
+    default: default
+    oneOf:
+      - title: Default VM Apps Network
+        const: default
+      - title: Application Network
+        const: app
+      - title: Management Network
+        const: mgmt
+
+  ipAssignment:
+    type: string
+    title: IP Assignment
+    default: dynamic
+    oneOf:
+      - title: Dynamic
+        const: dynamic
+      - title: Static
+        const: static
+
+  requestedIpAddress:
+    type: string
+    title: Requested IP Address
+    description: Optional. Show this field in the custom form only when static IP assignment is selected.
+    default: ''
+    pattern: '^$|^((25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})(\.|$)){4}$'
+
+  image:
+    type: string
+    title: Windows Image
+    default: windows-server-2022
+    oneOf:
+      - title: Windows Server 2022
+        const: windows-server-2022
+
+  flavor:
+    type: string
+    title: Virtual Machine Size
+    description: Size intent. Flavor mappings should use matching names and be tagged with vmapps.flavor:<value>.
+    default: medium
+    oneOf:
+      - title: Small
+        const: small
+      - title: Medium
+        const: medium
+      - title: Large
+        const: large
+
+  storageTier:
+    type: string
+    title: Storage Tier
+    description: Storage intent. The matching storage profile or datastore must be tagged with vmapps.storage:<value>.
+    default: standard
+    oneOf:
+      - title: Standard
+        const: standard
+      - title: Performance
+        const: performance
+      - title: Capacity
+        const: capacity
+
+  customizationSpec:
+    type: string
+    title: vSphere Customization Spec
+    default: windows-server-domain
+    description: Existing vSphere guest customization specification used by Aria Automation 8.x VM Apps deployments.
+
+  domainName:
+    type: string
+    title: DNS / AD Domain
+    default: lab.ncl
+    oneOf:
+      - title: lab.ncl
+        const: lab.ncl
+      - title: lanz.lab.ncl
+        const: lanz.lab.ncl
+
+  joinDomain:
+    type: boolean
+    title: Join AD Domain
+    default: true
+
+  adOuPath:
+    type: string
+    title: AD OU Path
+    default: OU=Servers,OU=LAB,DC=lab,DC=ncl
+    description: Distinguished name used by post-deployment AD automation if the customization spec cannot place the object.
+
+  dnsZone:
+    type: string
+    title: DNS Zone
+    default: lab.ncl
+
+  ownerGroup:
+    type: string
+    title: Owner Group
+    default: platform
+
+  requestedLeaseDays:
+    type: integer
+    title: Lease Days
+    default: 30
+    minimum: 1
+    maximum: 365
+
+variables:
+  hostname: ${to_lower(input.vmName)}
+  dnsServer01: 10.255.50.24
+  dnsServer02: 10.255.50.26
+  owner: ${split(env.requestedBy, '@')[0]}
+  locationTag: vmapps.location:${input.location}
+  networkTag: vmapps.network:${input.network}
+  storageTag: vmapps.storage:${input.storageTier}
+  flavorTag: vmapps.flavor:${input.flavor}
+  commonTags:
+    - key: vcf.vm/vmName
+      value: ${variable.hostname}
+    - key: vcf.vm/application
+      value: ${input.application}
+    - key: vcf.vm/environment
+      value: ${input.environment}
+    - key: vcf.vm/owner
+      value: ${variable.owner}
+
+resources:
+  VmNetwork:
+    type: Cloud.vSphere.Network
+    properties:
+      networkType: existing
+      constraints:
+        - tag: ${variable.networkTag}
+
+  WindowsVM:
+    type: Cloud.vSphere.Machine
+    properties:
+      name: ${variable.hostname}
+      image: ${input.image}
+      flavor: ${input.flavor}
+      customizationSpec: ${input.customizationSpec}
+      folderName: ${input.application}/${input.environment}
+      networks:
+        - network: ${resource.VmNetwork.id}
+          assignment: ${input.ipAssignment}
+          address: ${input.ipAssignment == 'static' ? input.requestedIpAddress:''}
+      constraints:
+        - tag: ${variable.locationTag}
+      storage:
+        constraints:
+          - tag: ${variable.storageTag}
+      tags: ${variable.commonTags}
+      customProperties:
+        vcf.vm/vmName: ${variable.hostname}
+        vcf.vm/fqdn: ${variable.hostname}.${input.domainName}
+        vcf.vm/application: ${input.application}
+        vcf.vm/environment: ${input.environment}
+        vcf.vm/owner: ${variable.owner}
+        vcf.vm/requestedBy: ${env.requestedBy}
+        vcf.vm/location: ${input.location}
+        vcf.vm/domainName: ${input.domainName}
+        vcf.vm/dnsZone: ${input.dnsZone}
+        vcf.vm/adOuPath: ${input.adOuPath}
+        vcf.vm/domainJoinRequested: ${format('%s', input.joinDomain)}
+        vcf.vm/requestedLeaseDays: ${format('%d', input.requestedLeaseDays)}
+        vcf.vm/network: ${input.network}
+        vcf.vm/networkTag: ${variable.networkTag}
+        vcf.vm/storageTier: ${input.storageTier}
+        vcf.vm/storageTag: ${variable.storageTag}
+        vcf.vm/flavorTag: ${variable.flavorTag}
+        vcf.vm/ipAssignment: ${input.ipAssignment}
+        vcf.vm/requestedIpAddress: ${input.requestedIpAddress}
+        vcf.vm/osType: windows
+
+outputs:
+  hostname:
+    value: ${variable.hostname}
+  fqdn:
+    value: ${variable.hostname}.${input.domainName}
+  network:
+    value: ${input.network}
+  networkTag:
+    value: ${variable.networkTag}
+  storageTier:
+    value: ${input.storageTier}
+  storageTag:
+    value: ${variable.storageTag}
+  flavorTag:
+    value: ${variable.flavorTag}
+  ipAssignment:
+    value: ${input.ipAssignment}
+  requestedIpAddress:
+    value: ${input.ipAssignment == 'static' ? input.requestedIpAddress:'automatic'}
+  guestPrimaryIp:
+    value: ${resource.WindowsVM.address}
+postDeploymentPayload:
+  value:
+    vmName: ${variable.hostname}
+    fqdn: ${variable.hostname}.${input.domainName}
+    osType: windows
+    environment: ${input.environment}
+    application: ${input.application}
+    requestedBy: ${env.requestedBy}
+    owner: ${variable.owner}
+    location: ${input.location}
+    domainName: ${input.domainName}
+    domainJoinRequested: ${input.joinDomain}
+    adOuPath: ${input.adOuPath}
+    dnsZone: ${input.dnsZone}
+    image: ${input.image}
+    flavor: ${input.flavor}
+    flavorTag: ${variable.flavorTag}
+    storageTier: ${input.storageTier}
+    storageTag: ${variable.storageTag}
+    customizationSpec: ${input.customizationSpec}
+    network:
+      name: ${input.network}
+      tag: ${variable.networkTag}
+      ipAssignment: ${input.ipAssignment}
+      requestedIpAddress: ${input.requestedIpAddress}
+      guestPrimaryIp: ${resource.WindowsVM.address}
+    labelPatch:
+      vcf.vm/primaryIp: ${resource.WindowsVM.address}
+    vCenterTags:
+      app.kubernetes.io/name: vm-lifecycle
+      app.kubernetes.io/instance: ${variable.hostname}
+      vcf.vm/vmName: ${variable.hostname}
+      vcf.vm/application: ${input.application}
+      vcf.vm/environment: ${input.environment}
+      vcf.vm/owner: ${variable.owner}
+  __deploymentOverview:
+    value: |-
+      ## Windows VM Deployment
+
+      Your Windows virtual machine deployment completed successfully.
+
+      ---
+
+      #### Machine Summary
+
+      <table class="table table-vertical table-compact">
+        <tr>
+          <th class="left">Name</th>
+          <td><strong>${variable.hostname}</strong></td>
+        </tr>
+        <tr>
+          <th class="left">FQDN</th>
+          <td><code>${variable.hostname}.${input.domainName}</code></td>
+        </tr>
+        <tr>
+          <th class="left">Operating System</th>
+          <td><span class="label label-info">Windows Server</span></td>
+        </tr>
+        <tr>
+          <th class="left">Application</th>
+          <td>${input.application}</td>
+        </tr>
+        <tr>
+          <th class="left">Environment</th>
+          <td><span class="label label-default">${input.environment}</span></td>
+        </tr>
+        <tr>
+          <th class="left">Requested By</th>
+          <td>${env.requestedBy}</td>
+        </tr>
+        <tr>
+          <th class="left">Image</th>
+          <td>${input.image}</td>
+        </tr>
+        <tr>
+          <th class="left">Flavor</th>
+          <td>${input.flavor}</td>
+        </tr>
+        <tr>
+          <th class="left">Storage Tier</th>
+          <td>${input.storageTier}</td>
+        </tr>
+      </table>
+
+      ---
+
+      #### Network and Access
+
+      <table class="table table-vertical table-compact">
+        <tr>
+          <th class="left">Network</th>
+          <td><code>${input.network}</code></td>
+        </tr>
+        <tr>
+          <th class="left">Network Tag</th>
+          <td><code>${variable.networkTag}</code></td>
+        </tr>
+        <tr>
+          <th class="left">IP Assignment</th>
+          <td>${input.ipAssignment}</td>
+        </tr>
+        <tr>
+          <th class="left">Requested IP</th>
+          <td><code>${input.ipAssignment == 'static' ? input.requestedIpAddress:'automatic'}</code></td>
+        </tr>
+        <tr>
+          <th class="left">Guest Primary IP</th>
+          <td><code>${resource.WindowsVM.address}</code></td>
+        </tr>
+        <tr>
+          <th class="left">DNS Domain</th>
+          <td>${input.domainName}</td>
+        </tr>
+        <tr>
+          <th class="left">DNS Zone</th>
+          <td>${input.dnsZone}</td>
+        </tr>
+        <tr>
+          <th class="left">Name Servers</th>
+          <td><code>${variable.dnsServer01}</code>, <code>${variable.dnsServer02}</code></td>
+        </tr>
+      </table>
+
+      ---
+
+      #### Lifecycle Tasks
+
+      <table class="table table-vertical table-compact">
+        <tr>
+          <th class="left">AD Domain Join</th>
+          <td>${input.joinDomain ? 'Requested':'Not requested'}</td>
+        </tr>
+        <tr>
+          <th class="left">Target OU</th>
+          <td><code>${input.adOuPath}</code></td>
+        </tr>
+        <tr>
+          <th class="left">Customization Spec</th>
+          <td><code>${input.customizationSpec}</code></td>
+        </tr>
+        <tr>
+          <th class="left">DNS Record</th>
+          <td>Handled by post-deployment automation</td>
+        </tr>
+        <tr>
+          <th class="left">VM IP Label</th>
+          <td><code>vcf.vm/primaryIp</code></td>
+        </tr>
+        <tr>
+          <th class="left">vCenter Tags</th>
+          <td>Handled by post-deployment automation from the VM tags and custom properties</td>
+        </tr>
+        <tr>
+          <th class="left">Placement Tags</th>
+          <td><code>${variable.locationTag}</code>, <code>${variable.storageTag}</code>, <code>${variable.flavorTag}</code></td>
+        </tr>
+      </table>

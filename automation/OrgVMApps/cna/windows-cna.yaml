@@ -1,0 +1,200 @@
+formatVersion: 1
+inputs:
+  windowsOSversion:
+    type: string
+    title: OS Version
+    default: Windows-2022
+    enum:
+      - Windows-2025
+      - Windows-2022
+      - Windows-2019
+  tshirtRange:
+    type: string
+    title: T-Shirt Range
+    default: Standard Range
+    enum:
+      - Standard Range
+      - Memory Focus Range
+      - CPU Focus Range
+  tshirtSizing:
+    type: string
+    title: T-Shirt Sizing
+    description: CPU and Memory T-shirt Sizing
+    default: ''
+  location:
+    type: string
+    title: Location
+    default: ''
+  dataCenter:
+    type: string
+    title: Data Center
+    default: Workload
+    enum:
+      - Workload
+  clusterInfo:
+    type: string
+    title: Cluster Info
+  environment:
+    type: string
+    title: Environment
+    default: non-prod
+    oneOf:
+      - title: Production
+        const: prod
+      - title: Non-Production
+        const: non-prod
+  disks:
+    type: array
+    title: Additional Disks
+    description: Additional data disks.
+    default:
+      - mountPoint: E
+        drivename: data
+        size: 100
+    maxItems: 10
+    minItems: 0
+    items:
+      type: object
+      properties:
+        mountPoint:
+          type: string
+          title: Drive Letter
+        drivename:
+          type: string
+          title: Drive Name
+        size:
+          type: integer
+          title: Size (GB)
+          minSize: 1
+          maxSize: 1000
+  serverEnv:
+    type: string
+    title: Server Environment
+  serverFunction:
+    type: string
+    title: Server Function
+    default: AP
+    oneOf:
+      - title: Application (All Servers other than websites)
+        const: AP
+      - title: Citrix
+        const: CX
+      - title: Database
+        const: DB
+      - title: Domain Controllers
+        const: DC
+      - title: Exchange
+        const: EX
+      - title: File Server or File System
+        const: FS
+      - title: Proof of Concept
+        const: PC
+      - title: Security
+        const: SC
+      - title: Web Server (Servers with IIS or Hosting Websites)
+        const: WB
+  appName:
+    type: string
+    title: Application Name
+  rebuildofExistingServer:
+    type: string
+    title: Replacement of an existing  server
+    description: replacement of an existing  server
+    default: 'Yes'
+    enum:
+      - 'Yes'
+      - 'No'
+  existingServerName:
+    type: string
+    title: Existing Server Name
+  appID:
+    type: string
+    title: Application ID
+  appOwner:
+    type: string
+    title: Application Owner
+    description: Application Owner
+  appManagedBy:
+    type: string
+    title: Application Managed By
+    description: Application Managed By
+  region:
+    type: string
+    title: Region
+    default: US
+resources:
+  Cloud_Ansible_1:
+    type: Cloud.Ansible
+    properties:
+      host: ${resource.Cloud_vSphere_Machine_1.*}
+      inventoryFile: /etc/ansible/hosts
+      authentication: usernamePassword
+      osType: windows
+      account: Ansible-Prod
+      username: ${secret.windows-localuser}
+      password: ${secret.windows-localpassword}
+      groups:
+        - windows
+      maxConnectionRetries: 3
+      playbooks:
+        provision:
+          - /opt/ansible/projects/private_cloud_automation/playbooks/windows_agents_install.yml
+  Cloud_vSphere_Machine_1:
+    type: Cloud.vSphere.Machine
+    properties:
+      serverFunction: ${input.serverFunction}
+      serverEnv: ${input.serverEnv}
+      osType: ${propgroup.guestOSType.windowsGuest}
+      domainName: ${propgroup.domainProperties.domainName}
+      location: ${input.location}
+      dataCenter: ${input.dataCenter}
+      environment: ${input.environment}
+      clusterInfo: ${input.clusterInfo}
+      image: ${input.windowsOSversion +"-Base"}
+      diskSize: ${input.disks}
+      appName: ${input.appName}
+      appID: ${input.appID}
+      customizationSpec: ${propgroup.domainProperties.customizationSpecwindows}
+      flavor: ${input.tshirtSizing}
+      networks:
+        - network: ${resource.Cloud_NSX_Network_1.id}
+          assignment: static
+      storage:
+        constraints:
+          - tag: loc:${input.location}
+          - tag: datacenter:${input.dataCenter}
+          - tag: env:${input.environment}
+          - tag: os:windows
+          - tag: cluster:${input.clusterInfo}
+      constraints:
+        - tag: loc:${input.location}
+        - tag: datacenter:${input.dataCenter}
+        - tag: env:${input.environment}
+        - tag: os:windows
+        - tag: cluster:${input.clusterInfo}
+      attachedDisks: ${map_to_object(resource.Cloud_Volume_1[*].id, "source")}
+  Cloud_NSX_Network_1:
+    type: Cloud.NSX.Network
+    properties:
+      networkType: existing
+      constraints:
+        - tag: loc:${input.location}
+        - tag: datacenter:${input.dataCenter}
+        - tag: env:${input.environment}
+        - tag: os:windows
+        - tag: cluster:${input.clusterInfo}
+  Cloud_Volume_1:
+    type: Cloud.Volume
+    allocatePerInstance: true
+    properties:
+      clusterInfo: ${input.clusterInfo}
+      capacityGb: ${input.disks[count.index].size}
+      SCSIController: SCSI_Controller_0
+      unitNumber: '${count.index < 6 ? to_string(count.index + 1) : to_string(count.index + 2)}'
+      count: '${length(input.disks) == 0 ? 0 : length(input.disks)}'
+      constraints:
+        - tag: loc:${input.location}
+        - tag: datacenter:${input.dataCenter}
+        - tag: env:${input.environment}
+        - tag: os:windows
+        - tag: cluster:${input.clusterInfo}
