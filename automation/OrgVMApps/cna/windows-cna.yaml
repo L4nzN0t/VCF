@@ -1,39 +1,38 @@
-formatVersion: 1
+formatVersion: 2
+name: vcf-902-org-vm-apps-windows-cna
+version: 1
 inputs:
   windowsOSversion:
     type: string
     title: OS Version
-    default: Windows-2022
+    default: Windows-Server-2022
     enum:
-      - Windows-2025
-      - Windows-2022
-      - Windows-2019
-  tshirtRange:
-    type: string
-    title: T-Shirt Range
-    default: Standard Range
-    enum:
-      - Standard Range
-      - Memory Focus Range
-      - CPU Focus Range
+      - Windows-Server-2025
+      - Windows-Server-2022
+      - Windows-Server-2019
   tshirtSizing:
     type: string
-    title: T-Shirt Sizing
-    description: CPU and Memory T-shirt Sizing
-    default: ''
+    title: T-Shirt Range
+    $dynamicEnum: /data/vro-actions/com.vmware.library.vra.infrastructure.flavor/getAllFlavorMapping?host={"value":"XEzVOwS4RwySYtisEGW5tA","label":"Default"}
+  # Define which vCenter will be deployed
   location:
     type: string
     title: Location
-    default: ''
+    enum:
+      - Aurora
+      - Blyth
+  # Define which enviroment: MGMT or Workload
   dataCenter:
     type: string
-    title: Data Center
+    title: Enviroment
     default: Workload
     enum:
       - Workload
-  clusterInfo:
-    type: string
-    title: Cluster Info
+      - Management
+  # Develop actions to pull cluster dynamically
+  # clusterInfo:
+  #   type: string
+  #   title: Cluster Info
   environment:
     type: string
     title: Environment
@@ -47,10 +46,10 @@ inputs:
     type: array
     title: Additional Disks
     description: Additional data disks.
-    default:
-      - mountPoint: E
-        drivename: data
-        size: 100
+    # default:
+    #   - mountPoint: E
+    #     drivename: data
+    #     size: 100
     maxItems: 10
     minItems: 0
     items:
@@ -121,24 +120,37 @@ inputs:
   region:
     type: string
     title: Region
-    default: US
+    enum:
+      - US
+      - UK
 resources:
-  Cloud_Ansible_1:
-    type: Cloud.Ansible
+  ## NETWORKING
+  Cloud_vSphere_Network_1:
+    type: Cloud.vSphere.Network
     properties:
-      host: ${resource.Cloud_vSphere_Machine_1.*}
-      inventoryFile: /etc/ansible/hosts
-      authentication: usernamePassword
-      osType: windows
-      account: Ansible-Prod
-      username: ${secret.windows-localuser}
-      password: ${secret.windows-localpassword}
-      groups:
-        - windows
-      maxConnectionRetries: 3
-      playbooks:
-        provision:
-          - /opt/ansible/projects/private_cloud_automation/playbooks/windows_agents_install.yml
+      networkType: existing
+      constraints:
+        - tag: loc:${input.location}
+        - tag: datacenter:${input.dataCenter}
+        - tag: env:${input.environment}
+        - tag: os:windows
+        # - tag: cluster:${input.clusterInfo}
+  ## STORAGE
+  Cloud_Volume_1:
+    type: Cloud.Volume
+    allocatePerInstance: true
+    properties:
+      # clusterInfo: ${input.clusterInfo}
+      capacityGb: ${input.disks[count.index].size}
+      SCSIController: SCSI_Controller_0
+      unitNumber: '${count.index < 6 ? to_string(count.index + 1) : to_string(count.index + 2)}'' count: '
+      ${length(input.disks) == 0 ? 0: length(input.disks)}''
+      constraints:
+        - tag: loc:${input.location}
+        - tag: datacenter:${input.dataCenter}
+        - tag: env:${input.environment}
+        - tag: os:windows
+        # - tag: cluster:${input.clusterInfo}
   Cloud_vSphere_Machine_1:
     type: Cloud.vSphere.Machine
     properties:
@@ -149,15 +161,14 @@ resources:
       location: ${input.location}
       dataCenter: ${input.dataCenter}
       environment: ${input.environment}
-      clusterInfo: ${input.clusterInfo}
-      image: ${input.windowsOSversion +"-Base"}
+      # clusterInfo: ${input.clusterInfo}
+      image: ${input.windowsOSversion + "-Base"}
       diskSize: ${input.disks}
       appName: ${input.appName}
       appID: ${input.appID}
-      customizationSpec: ${propgroup.domainProperties.customizationSpecwindows}
       flavor: ${input.tshirtSizing}
       networks:
-        - network: ${resource.Cloud_NSX_Network_1.id}
+        - network: ${resource.Cloud_vSphere_Network_1.id}
           assignment: static
       storage:
         constraints:
@@ -165,36 +176,28 @@ resources:
           - tag: datacenter:${input.dataCenter}
           - tag: env:${input.environment}
           - tag: os:windows
-          - tag: cluster:${input.clusterInfo}
+          # - tag: cluster:${input.clusterInfo}
       constraints:
         - tag: loc:${input.location}
         - tag: datacenter:${input.dataCenter}
         - tag: env:${input.environment}
         - tag: os:windows
-        - tag: cluster:${input.clusterInfo}
+        # - tag: cluster:${input.clusterInfo}
       attachedDisks: ${map_to_object(resource.Cloud_Volume_1[*].id, "source")}
-  Cloud_NSX_Network_1:
-    type: Cloud.NSX.Network
-    properties:
-      networkType: existing
-      constraints:
-        - tag: loc:${input.location}
-        - tag: datacenter:${input.dataCenter}
-        - tag: env:${input.environment}
-        - tag: os:windows
-        - tag: cluster:${input.clusterInfo}
-  Cloud_Volume_1:
-    type: Cloud.Volume
-    allocatePerInstance: true
-    properties:
-      clusterInfo: ${input.clusterInfo}
-      capacityGb: ${input.disks[count.index].size}
-      SCSIController: SCSI_Controller_0
-      unitNumber: '${count.index < 6 ? to_string(count.index + 1) : to_string(count.index + 2)}'
-      count: '${length(input.disks) == 0 ? 0 : length(input.disks)}'
-      constraints:
-        - tag: loc:${input.location}
-        - tag: datacenter:${input.dataCenter}
-        - tag: env:${input.environment}
-        - tag: os:windows
-        - tag: cluster:${input.clusterInfo}
+  ## ANSIBLE
+  # Cloud_Ansible_1:
+  #   type: Cloud.Ansible
+  #   properties:
+  #     host: ${resource.Cloud_vSphere_Machine_1.*}
+  #     inventoryFile: /etc/ansible/hosts
+  #     authentication: usernamePassword
+  #     osType: windows
+  #     account: Ansible-Prod
+  #     username: ${secret.windows-localuser}
+  #     password: ${secret.windows-localpassword}
+  #     groups:
+  #       - windows
+  #     maxConnectionRetries: 3
+  #     playbooks:
+  #       provision:
+  #         - /opt/ansible/projects/private_cloud_automation/playbooks/windows_agents_install.yml

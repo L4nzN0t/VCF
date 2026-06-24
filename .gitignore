@@ -1,0 +1,6 @@
+# Ignore a specific folder (add a trailing slash)
+nested_lab/
+
+# Ignore all files ending with a specific extension
+*.log
+*.tmp
