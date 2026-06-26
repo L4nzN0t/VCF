@@ -130,13 +130,13 @@ inputs:
     type: string
     encrypted: true
     title: SSH Password
-  sshPublicKey:
-    type: string
-    title: SSH Public Key
-    description: OpenSSH public key added to the custom user's authorized_keys file.
-    minLength: 32
-    maxLength: 4096
-    pattern: ^ssh-(rsa|ed25519|ecdsa) .+$
+  # sshPublicKey:
+  #   type: string
+  #   title: SSH Public Key
+  #   description: OpenSSH public key added to the custom user's authorized_keys file.
+  #   minLength: 32
+  #   maxLength: 4096
+  #   pattern: ^ssh-(rsa|ed25519|ecdsa) .+$
   allowPasswordlessSudo:
     type: boolean
     title: Allow Passwordless Sudo
@@ -145,11 +145,6 @@ inputs:
     type: boolean
     title: Expose SSH Load Balancer
     default: true
-  passwordField_cdc6f068:
-    type: string
-    encrypted: true
-    title: SSH Password
-    writeOnly: true
 variables:
   hostname: ${to_lower(input.vmName)}
   namespace: ${input.namespaceName}
@@ -273,6 +268,10 @@ resources:
       - DataDiskPVC03
     properties:
       context: ${resource.SupervisorNamespace.id}
+      wait:
+        conditions:
+            - type: VirtualMachineCreated
+              status: 'True'
       manifest:
         apiVersion: vmoperator.vmware.com/v1alpha3
         kind: VirtualMachine

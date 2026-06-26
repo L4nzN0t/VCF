@@ -309,6 +309,7 @@ resources:
               sysprep:
                 guiUnattended:
                   autoLogon: true
+                  autoLogonCount: 1
                   password:
                     name: vm-${variable.hostname}-bootstrap
                     key: localAdminPassword

@@ -1,8 +1,9 @@
 # Ignore a specific folder (add a trailing slash)
 .agents/
 nested_lab/
-automation/OrgVMApps/cna/
-automation/OrgVMApps/cbre/
+customers/
+private/
+
 
 # Ignore all files ending with a specific extension
 *.log

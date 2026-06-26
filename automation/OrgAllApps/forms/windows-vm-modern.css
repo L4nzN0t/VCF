@@ -1,0 +1,199 @@
+/* Aria Service Broker compatible custom form CSS for OrgAllApps Windows VM. */
+
+body {
+  background-color: #f5f8fb;
+  color: #172433;
+}
+
+.content-container,
+.main-container,
+.modal-content {
+  background-color: #f5f8fb;
+}
+
+.sidenav,
+.nav-panel,
+.clr-vertical-nav {
+  background-color: #102536;
+  border-right-color: #c9d8e4;
+}
+
+.sidenav .nav-link,
+.clr-vertical-nav .nav-link {
+  color: #dbe8f0;
+  border-left-color: transparent;
+}
+
+.sidenav .nav-link.active,
+.clr-vertical-nav .nav-link.active {
+  background-color: #e6f5fb;
+  border-left-color: #0078a6;
+  color: #102536;
+}
+
+.sidenav .nav-link:hover,
+.clr-vertical-nav .nav-link:hover {
+  background-color: #d9eef7;
+  color: #102536;
+}
+
+.content-area,
+.modal-body,
+.clr-wizard-content {
+  background-color: #ffffff;
+  border-color: #c9d8e4;
+  box-shadow: 0 12px 28px rgba(19, 48, 72, 0.12);
+}
+
+.modal-title,
+.clr-wizard-title,
+h1,
+h2,
+h3 {
+  color: #172433;
+  font-weight: 600;
+}
+
+.form-group,
+.clr-form-control {
+  margin-bottom: 14px;
+}
+
+.clr-control-label,
+label,
+.form-group label {
+  color: #20384d;
+  font-weight: 600;
+}
+
+.clr-input,
+.clr-select-wrapper select,
+.clr-textarea,
+input[type='text'],
+input[type='number'],
+select,
+textarea {
+  background-color: #fbfdff;
+  border-color: #c9d8e4;
+  border-radius: 4px;
+  color: #172433;
+  min-height: 32px;
+}
+
+.clr-input:hover,
+.clr-select-wrapper select:hover,
+input[type='text']:hover,
+input[type='number']:hover,
+select:hover,
+textarea:hover {
+  background-color: #ffffff;
+  border-color: #8fb2c7;
+}
+
+.clr-input:focus,
+.clr-select-wrapper select:focus,
+.clr-textarea:focus,
+input[type='text']:focus,
+input[type='number']:focus,
+select:focus,
+textarea:focus {
+  background-color: #ffffff;
+  border-color: #0078a6;
+  box-shadow: 0 0 0 3px rgba(0, 120, 166, 0.16);
+  outline: none;
+}
+
+.clr-checkbox-wrapper input[type='checkbox'],
+input[type='checkbox'] {
+  border-color: #0078a6;
+}
+
+.datagrid,
+.clr-datagrid {
+  background-color: #ffffff;
+  border-color: #c9d8e4;
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgba(19, 48, 72, 0.08);
+}
+
+.datagrid-header,
+.datagrid-column,
+.clr-datagrid-column {
+  background-color: #eef7fb;
+  border-color: #c9d8e4;
+  color: #17344a;
+  font-weight: 600;
+}
+
+.datagrid-row,
+.clr-datagrid-row,
+.datagrid-cell,
+.clr-datagrid-cell {
+  border-color: #dbe7ef;
+}
+
+.datagrid-row:hover,
+.clr-datagrid-row:hover {
+  background-color: #f3fbff;
+}
+
+.datagrid-footer,
+.clr-datagrid-footer {
+  background-color: #f7fafc;
+  border-top-color: #c9d8e4;
+}
+
+.btn,
+button {
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.btn-primary,
+button[type='submit'],
+.btn-success {
+  background-color: #0078a6;
+  border-color: #005f86;
+  color: #ffffff;
+  box-shadow: 0 8px 18px rgba(0, 95, 134, 0.22);
+}
+
+.btn-primary:hover,
+button[type='submit']:hover,
+.btn-success:hover {
+  background-color: #006f9c;
+  border-color: #006f9c;
+  color: #ffffff;
+}
+
+.btn-secondary,
+.btn-outline {
+  background-color: #ffffff;
+  border-color: #0078a6;
+  color: #005f86;
+}
+
+.btn-link,
+.btn-icon,
+button[aria-label*='Add'],
+button[title*='Add'] {
+  color: #0078a6;
+}
+
+.clr-subtext,
+.help-block,
+.description,
+.clr-control-helper {
+  color: #5b7083;
+}
+
+.required,
+.clr-required-mark {
+  color: #c64242;
+}
+
+.modal-footer,
+.clr-wizard-footer {
+  background-color: #f8fbfd;
+  border-top-color: #c9d8e4;
+}
