@@ -1,0 +1,483 @@
+formatVersion: 2
+name: vcf-902-linux-vm-lifecycle
+version: 1
+inputs:
+  vmName:
+    type: string
+    title: Virtual Machine Name
+    description: Lowercase DNS-safe name. Linux host names should stay DNS compatible.
+    minLength: 3
+    maxLength: 15
+    pattern: ^[a-z][a-z0-9-]{1,13}[a-z0-9]$
+  location:
+    type: string
+    title: vCenter / Workload Domain
+    oneOf:
+      - title: Lab05 Mgmt-01
+        const: MGMT
+      - title: Lab05 Wld-01
+        const: WL1
+      - title: Lab05 Wld-02
+        const: WL2
+  namespaceName:
+    type: string
+    title: Namespace
+    description: Existing Supervisor namespace used as the deployment target.
+    $data: /data/namespaces?projectId={{project}}
+  storageClass:
+    type: string
+    title: Storage Class
+    $data: /data/storageclasses?namespace={{namespaceName}}
+  vmClass:
+    type: string
+    title: Virtual Machine Size
+    description: Select an allowed VM class for the target namespace.
+    $data: /data/virtualmachineclasses?namespace={{namespaceName}}
+  linuxImage:
+    type: string
+    title: Linux Image
+    description: Supervisor VM image name for the Linux guest.
+    default: vmi-6a069cc11de5f4ba6
+    oneOf:
+      - title: Ubuntu Server 22.04
+        const: vmi-6a069cc11de5f4ba6
+      - title: Ubuntu Server 24.04
+        const: ubuntu-2404
+  additionalDisks:
+    type: array
+    title: Additional Disks
+    description: Optional data disks to be created, attached, and initialized by post-deployment automation.
+    default: []
+    minItems: 0
+    maxItems: 3
+    items:
+      type: object
+      properties:
+        mountPath:
+          type: string
+          title: Mount Path
+          description: Linux mount point for the data disk, for example /data or /mnt/app.
+          maxLength: 64
+          minLength: 2
+          pattern: ^/[a-zA-Z0-9][a-zA-Z0-9/_-]*$
+        volumeLabel:
+          type: string
+          title: Volume Label
+          maxLength: 32
+          minLength: 1
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_-]*$
+        sizeGb:
+          type: integer
+          title: Size (GB)
+          maximum: 4096
+          minimum: 1
+  application:
+    type: string
+    title: Application
+    oneOf:
+      - title: Application (All Servers other than websites)
+        const: AP
+      - title: Citrix
+        const: CX
+      - title: Database
+        const: DB
+      - title: Domain Controllers
+        const: DC
+      - title: Exchange
+        const: EX
+      - title: File Server or File System
+        const: FS
+      - title: Proof of Concept
+        const: PC
+      - title: Security
+        const: SC
+      - title: Web Server
+        const: WB
+  environment:
+    type: string
+    title: Environment
+    default: prod
+    oneOf:
+      - title: Non-Production
+        const: non-prod
+      - title: Production
+        const: prod
+  ownerGroup:
+    type: string
+    title: Owner Group
+  domainName:
+    type: string
+    title: DNS Domain
+    default: lab.ncl
+    oneOf:
+      - title: lab.ncl
+        const: lab.ncl
+      - title: lanz.lab.ncl
+        const: lanz.lab.ncl
+  dnsZone:
+    type: string
+    title: DNS Zone
+    default: lab.ncl
+  sshUsername:
+    type: string
+    title: SSH User
+    description: Local Linux user created by cloud-init for SSH access.
+    default: cloudadmin
+    minLength: 2
+    maxLength: 32
+    pattern: ^[a-z_][a-z0-9_-]*$
+  sshPassword:
+    type: string
+    encrypted: true
+    title: SSH Password
+  sshPublicKey:
+    type: string
+    title: SSH Public Key
+    description: OpenSSH public key added to the custom user's authorized_keys file.
+    minLength: 32
+    maxLength: 4096
+    pattern: ^ssh-(rsa|ed25519|ecdsa) .+$
+  allowPasswordlessSudo:
+    type: boolean
+    title: Allow Passwordless Sudo
+    default: true
+  exposeRemoteAccess:
+    type: boolean
+    title: Expose SSH Load Balancer
+    default: true
+  passwordField_cdc6f068:
+    type: string
+    encrypted: true
+    title: SSH Password
+    writeOnly: true
+variables:
+  hostname: ${to_lower(input.vmName)}
+  namespace: ${input.namespaceName}
+  storageClass: ${input.storageClass}
+  dnsServer01: ${propgroup.dnsServers.dnsServer01}
+  commonLabels:
+    app.kubernetes.io/name: vm-lifecycle
+    app.kubernetes.io/instance: ${variable.hostname}
+    vcf.vm/vmName: ${variable.hostname}
+    vcf.vm/application: ${input.application}
+    vcf.vm/environment: ${input.environment}
+    vcf.vm/owner: ${split(env.requestedBy, '@')[0]}
+  commonAnnotations:
+    vcf.vm/environment: ${input.environment}
+    vcf.vm/requestedBy: ${env.requestedBy}
+    vcf.vm/location: ${input.location}
+    vcf.vm/domainName: ${input.domainName}
+    vcf.vm/dnsZone: ${input.dnsZone}
+    vcf.vm/sshUser: ${input.sshUsername}
+resources:
+  SupervisorNamespace:
+    type: CCI.Supervisor.Namespace
+    properties:
+      name: ${variable.namespace}
+      existing: true
+  RemoteAccessService:
+    type: CCI.Supervisor.Resource
+    properties:
+      count: ${input.exposeRemoteAccess ? 1:0}
+      context: ${resource.SupervisorNamespace.id}
+      manifest:
+        apiVersion: vmoperator.vmware.com/v1alpha3
+        kind: VirtualMachineService
+        metadata:
+          name: svc-${variable.hostname}
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+        spec:
+          selector:
+            app.kubernetes.io/instance: ${variable.hostname}
+          type: LoadBalancer
+          ports:
+            - name: ssh
+              port: 22
+              protocol: TCP
+              targetPort: 22
+  DataDiskPVC01:
+    type: CCI.Supervisor.Resource
+    properties:
+      count: ${length(input.additionalDisks) > 0 ? 1:0}
+      context: ${resource.SupervisorNamespace.id}
+      manifest:
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        metadata:
+          name: pvc-${variable.hostname}-${to_lower(input.additionalDisks[0].volumeLabel)}
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+          annotations:
+            vcf.vm/disk.mountPath: ${input.additionalDisks[0].mountPath}
+            vcf.vm/disk.volumeLabel: ${input.additionalDisks[0].volumeLabel}
+            vcf.vm/disk.sizeGb: ${format('%d', input.additionalDisks[0].sizeGb)}
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          storageClassName: ${variable.storageClass}
+          resources:
+            requests:
+              storage: ${format('%dGi', input.additionalDisks[0].sizeGb)}
+  DataDiskPVC02:
+    type: CCI.Supervisor.Resource
+    properties:
+      count: ${length(input.additionalDisks) > 1 ? 1:0}
+      context: ${resource.SupervisorNamespace.id}
+      manifest:
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        metadata:
+          name: pvc-${variable.hostname}-${to_lower(input.additionalDisks[1].volumeLabel)}
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+          annotations:
+            vcf.vm/disk.mountPath: ${input.additionalDisks[1].mountPath}
+            vcf.vm/disk.volumeLabel: ${input.additionalDisks[1].volumeLabel}
+            vcf.vm/disk.sizeGb: ${format('%d', input.additionalDisks[1].sizeGb)}
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          storageClassName: ${variable.storageClass}
+          resources:
+            requests:
+              storage: ${format('%dGi', input.additionalDisks[1].sizeGb)}
+  DataDiskPVC03:
+    type: CCI.Supervisor.Resource
+    properties:
+      count: ${length(input.additionalDisks) > 2 ? 1:0}
+      context: ${resource.SupervisorNamespace.id}
+      manifest:
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        metadata:
+          name: pvc-${variable.hostname}-${to_lower(input.additionalDisks[2].volumeLabel)}
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+          annotations:
+            vcf.vm/disk.mountPath: ${input.additionalDisks[2].mountPath}
+            vcf.vm/disk.volumeLabel: ${input.additionalDisks[2].volumeLabel}
+            vcf.vm/disk.sizeGb: ${format('%d', input.additionalDisks[2].sizeGb)}
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          storageClassName: ${variable.storageClass}
+          resources:
+            requests:
+              storage: ${format('%dGi', input.additionalDisks[2].sizeGb)}
+  LinuxVM:
+    type: CCI.Supervisor.Resource
+    dependsOn:
+      - DataDiskPVC01
+      - DataDiskPVC02
+      - DataDiskPVC03
+    properties:
+      context: ${resource.SupervisorNamespace.id}
+      manifest:
+        apiVersion: vmoperator.vmware.com/v1alpha3
+        kind: VirtualMachine
+        metadata:
+          name: ${variable.hostname}
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+          annotations: ${variable.commonAnnotations}
+        spec:
+          className: ${input.vmClass}
+          imageName: ${input.linuxImage}
+          storageClass: ${variable.storageClass}
+          powerState: PoweredOn
+          volumes: '${map_by(input.additionalDisks, disk => {''name'':''pvc-'' + variable.hostname + ''-'' + to_lower(disk.volumeLabel), ''persistentVolumeClaim'': {''claimName'':''pvc-'' + variable.hostname + ''-'' + to_lower(disk.volumeLabel)}})}'
+          network:
+            hostName: ${variable.hostname}
+            domainName: ${input.domainName}
+            nameservers:
+              - ${variable.dnsServer01}
+            searchDomains:
+              - ${input.domainName}
+          bootstrap:
+            cloudInit:
+              cloudConfig:
+                hostname: ${variable.hostname}
+                manage_etc_hosts: true
+                users:
+                  - name: ${input.sshUsername}
+                    groups:
+                      - sudo
+                    shell: /bin/bash
+                    sudo: ${input.allowPasswordlessSudo ? 'ALL=(ALL) NOPASSWD:ALL':'ALL=(ALL) ALL'}
+                    passwd:
+                      name: ${input.sshUsername}
+                      key: ${input.sshPassword}
+                    # ssh_authorized_keys:
+                    #   - ${input.sshPublicKey}
+                # ssh_pwauth: false
+                lock_passwd: false
+                disable_root: false
+                package_update: true
+                runcmd:
+                  - systemctl enable ssh || systemctl enable sshd || true
+                  - systemctl restart ssh || systemctl restart sshd || true
+outputs:
+  hostname:
+    value: ${variable.hostname}
+  namespace:
+    value: ${variable.namespace}
+  sshUsername:
+    value: ${input.sshUsername}
+  remoteAccessServiceName:
+    value: ${input.exposeRemoteAccess ? 'svc-' + variable.hostname:'not-exposed'}
+  remoteAccessExternalIp:
+    value: ${input.exposeRemoteAccess ? 'assigned-by-load-balancer-controller':'not-exposed'}
+  additionalDiskCount:
+    value: ${length(input.additionalDisks)}
+  additionalDisks:
+    value: ${input.additionalDisks}
+postDeploymentPayload:
+  value:
+    vmName: ${variable.hostname}
+    fqdn: ${variable.hostname}.${input.domainName}
+    namespace: ${variable.namespace}
+    osType: linux
+    environment: ${input.environment}
+    application: ${input.application}
+    requestedBy: ${env.requestedBy}
+    domainName: ${input.domainName}
+    dnsZone: ${input.dnsZone}
+    vmClass: ${input.vmClass}
+    storageClass: ${input.storageClass}
+    linuxImage: ${input.linuxImage}
+    sshUsername: ${input.sshUsername}
+    additionalDisksRequested: ${length(input.additionalDisks) > 0}
+    additionalDisks: ${input.additionalDisks}
+    remoteAccessEnabled: ${input.exposeRemoteAccess}
+    remoteAccessServiceName: ${input.exposeRemoteAccess ? 'svc-' + variable.hostname:'not-exposed'}
+    remoteAccessExternalIp: ${input.exposeRemoteAccess ? 'assigned-by-load-balancer-controller':'not-exposed'}
+    labelPatch:
+      vcf.vm/loadBalancerExternalIp: ${input.exposeRemoteAccess ? 'assigned-by-load-balancer-controller':'not-exposed'}
+    vCenterTags:
+      app.kubernetes.io/name: vm-lifecycle
+      app.kubernetes.io/instance: ${variable.hostname}
+      vcf.vm/vmName: ${variable.hostname}
+      vcf.vm/application: ${input.application}
+      vcf.vm/environment: ${input.environment}
+      vcf.vm/owner: ${split(env.requestedBy, '@')[0]}
+  __deploymentOverview:
+    value: |-
+      ## Linux VM Deployment
+
+      Your Linux virtual machine deployment completed successfully.
+
+      ---
+
+      #### Machine Summary
+
+      <table class="table table-vertical table-compact">
+        <tr>
+          <th class="left">Name</th>
+          <td><strong>${variable.hostname}</strong></td>
+        </tr>
+        <tr>
+          <th class="left">FQDN</th>
+          <td><code>${variable.hostname}.${input.domainName}</code></td>
+        </tr>
+        <tr>
+          <th class="left">Operating System</th>
+          <td><span class="label label-info">Linux</span></td>
+        </tr>
+        <tr>
+          <th class="left">Image</th>
+          <td>${input.linuxImage}</td>
+        </tr>
+        <tr>
+          <th class="left">Application</th>
+          <td>${input.application}</td>
+        </tr>
+        <tr>
+          <th class="left">Environment</th>
+          <td><span class="label label-default">${input.environment}</span></td>
+        </tr>
+        <tr>
+          <th class="left">Requested By</th>
+          <td>${env.requestedBy}</td>
+        </tr>
+        <tr>
+          <th class="left">Namespace</th>
+          <td><code>${variable.namespace}</code></td>
+        </tr>
+        <tr>
+          <th class="left">VM Class</th>
+          <td>${input.vmClass}</td>
+        </tr>
+        <tr>
+          <th class="left">Storage Class</th>
+          <td>${input.storageClass}</td>
+        </tr>
+        <tr>
+          <th class="left">Additional Disks</th>
+          <td>${length(input.additionalDisks)}</td>
+        </tr>
+      </table>
+
+      ---
+
+      #### Network and Access
+
+      <table class="table table-vertical table-compact">
+        <tr>
+          <th class="left">DNS Domain</th>
+          <td>${input.domainName}</td>
+        </tr>
+        <tr>
+          <th class="left">DNS Zone</th>
+          <td>${input.dnsZone}</td>
+        </tr>
+        <tr>
+          <th class="left">Name Servers</th>
+          <td><code>${variable.dnsServer01}</code></td>
+        </tr>
+        <tr>
+          <th class="left">SSH User</th>
+          <td><code>${input.sshUsername}</code></td>
+        </tr>
+        <tr>
+          <th class="left">Remote SSH</th>
+          <td>${input.exposeRemoteAccess ? 'Enabled':'Disabled'}</td>
+        </tr>
+        <tr>
+          <th class="left">Load Balancer Service</th>
+          <td><code>${input.exposeRemoteAccess ? 'svc-' + variable.hostname:'not-exposed'}</code></td>
+        </tr>
+        <tr>
+          <th class="left">Load Balancer External IP</th>
+          <td><code>${input.exposeRemoteAccess ? 'assigned-by-load-balancer-controller':'not-exposed'}</code></td>
+        </tr>
+        <tr>
+          <th class="left">SSH</th>
+          <td><code>${input.exposeRemoteAccess ? input.sshUsername + '@svc-' + variable.hostname + ':22':'internal network only'}</code></td>
+        </tr>
+      </table>
+
+      ---
+
+      #### Lifecycle Tasks
+
+      <table class="table table-vertical table-compact">
+        <tr>
+          <th class="left">Cloud Init</th>
+          <td>Creates SSH user, installs the authorized key, disables root login, and restarts SSH.</td>
+        </tr>
+        <tr>
+          <th class="left">DNS Record</th>
+          <td>Handled by post-deployment automation</td>
+        </tr>
+        <tr>
+          <th class="left">LB IP Label</th>
+          <td><code>vcf.vm/loadBalancerExternalIp</code></td>
+        </tr>
+        <tr>
+          <th class="left">vCenter Tags</th>
+          <td>Handled by post-deployment automation from the VM labels</td>
+        </tr>
+      </table>
+
+      > If the load balancer IP is blank, refresh the deployment after the Supervisor load balancer controller assigns an external address.
