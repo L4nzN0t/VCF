@@ -1,0 +1,364 @@
+formatVersion: 2
+name: cbre-windows-vm
+version: 3
+inputs:
+  vmName:
+    type: string
+    title: Virtual Machine Name
+    description: Lowercase DNS-safe Windows hostname, from 3 to 15 characters.
+    minLength: 3
+    maxLength: 15
+    pattern: ^[a-z][a-z0-9-]{1,13}[a-z0-9]$
+  location:
+    type: string
+    title: vCenter Environment
+    description: vCenter or workload-domain location used for placement and inventory metadata.
+    minLength: 1
+  namespaceName:
+    type: string
+    title: Namespace
+    description: Existing Supervisor namespace used as the deployment target.
+    $data: /data/namespaces?projectId={{project}}
+  storageClass:
+    type: string
+    title: Storage Class
+    description: Storage class used by the VM and all additional disks.
+    $data: /data/storageclasses?namespace={{namespaceName}}
+  vmClass:
+    type: string
+    title: T-Shirt VM Class
+    description: VM class used when Virtual Machine Size Type is T-Shirt Size.
+    $data: /data/virtualmachineclasses?namespace={{namespaceName}}
+  subnetName:
+    type: string
+    title: Supervisor Subnet
+    description: Existing Supervisor Subnet resource used by the VM network interface.
+    default: subnet-vm-app-public
+    minLength: 1
+    maxLength: 63
+    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+  windowsImage:
+    type: string
+    title: Windows Image
+    default: vmi-b65217a5051ad6ded
+    oneOf:
+      - title: Windows Server 2025
+        const: vmi-b65217a5051ad6ded
+      - title: Windows Server 2022
+        const: vmi-b65217a5051ad6drd
+      - title: Windows Server 2019
+        const: vmi-b65217a5051ad6dtd
+      - title: SQL Server 2022
+        const: vmi-b65217a5051ad6dyd
+      - title: SQL Server 2019
+        const: vmi-b65217a5051ad6did
+  additionalDisks:
+    type: array
+    title: Additional Disks
+    description: Up to three data disks. Drive letters must be unique and unused in the Windows image.
+    default: []
+    minItems: 0
+    maxItems: 3
+    items:
+      type: object
+      required:
+        - driveLetter
+        - driveName
+        - sizeGb
+      properties:
+        driveLetter:
+          type: string
+          title: Drive Letter
+          minLength: 1
+          maxLength: 1
+          pattern: ^[D-Z]$
+        driveName:
+          type: string
+          title: Volume Label
+          minLength: 1
+          maxLength: 32
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_-]*$
+        sizeGb:
+          type: integer
+          title: Size (GB)
+          minimum: 1
+          maximum: 4096
+  domainName:
+    type: string
+    title: AD Domain or Workgroup
+    description: Selecting an AD domain requests a domain join; Workgroup skips domain credentials.
+    default: workgroup
+    oneOf:
+      - title: Workgroup
+        const: workgroup
+      - title: lab.ncl
+        const: lab.ncl
+      - title: us.cbre.net
+        const: us.cbre.net
+      - title: tnd.us.cbre.net
+        const: tnd.us.cbre.net
+  application:
+    type: string
+    title: Application
+    default: AP
+    oneOf:
+      - title: Application (All Servers other than websites)
+        const: AP
+      - title: Citrix
+        const: CX
+      - title: Database
+        const: DB
+      - title: Domain Controllers
+        const: DC
+      - title: Exchange
+        const: EX
+      - title: File Server or File System
+        const: FS
+      - title: Proof of Concept
+        const: PC
+      - title: Security
+        const: SC
+      - title: Web Server
+        const: WB
+  lineOfBusiness:
+    type: string
+    title: Line of Business
+    minLength: 1
+  environment:
+    type: string
+    title: Environment
+    default: test
+    oneOf:
+      - title: Production
+        const: prod
+      - title: Pre-Production
+        const: pre-prod
+      - title: Test
+        const: test
+  businessTower:
+    type: string
+    title: Business Tower
+    minLength: 1
+  apmno:
+    type: string
+    title: APM Number
+    minLength: 1
+  technicalOwner:
+    type: string
+    title: Technical Owner
+    minLength: 1
+  businessOwner:
+    type: string
+    title: Business Owner
+    minLength: 1
+variables:
+  orgName: ${propgroup.org.orgName}
+  hostname: ${to_lower(input.vmName)}
+  namespace: ${input.namespaceName}
+  storageClass: ${input.storageClass}
+  dnsServer01: ${propgroup.dnsServers.dnsServer01}
+  svcAccount: sa-svc-vcfa
+  isDomainJoin: ${input.domainName != 'workgroup'}
+  bootstrapSecretName: vm-${variable.hostname}-bootstrap
+  domainJoinSecretName: vm-${variable.hostname}-domain-join
+  commonLabels:
+    app.kubernetes.io/name: vm-lifecycle
+    app.kubernetes.io/instance: ${variable.hostname}
+    vcf.vm/vmName: ${variable.hostname}
+    vcf.vm/application: ${input.application}
+    vcf.vm/environment: ${input.environment}
+  commonAnnotations:
+    vcf.vm/requestedBy: ${env.requestedBy}
+    vcf.vm/location: ${input.location}
+    vcf.vm/domainName: ${input.domainName}
+    vcf.vm/lineOfBusiness: ${input.lineOfBusiness}
+    vcf.vm/businessTower: ${input.businessTower}
+    vcf.vm/apmno: ${input.apmno}
+    vcf.vm/technicalOwner: ${input.technicalOwner}
+    vcf.vm/businessOwner: ${input.businessOwner}
+resources:
+  SupervisorNamespace:
+    type: CCI.Supervisor.Namespace
+    properties:
+      existing: true
+      name: ${variable.namespace}
+  BootstrapSecret:
+    type: CCI.Supervisor.Resource
+    properties:
+      context: ${resource.SupervisorNamespace.id}
+      manifest:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: ${variable.bootstrapSecretName}
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+        type: Opaque
+        stringData:
+          localAdminPassword: ${secret.windows-bootstrap-password}
+  DomainJoinSecret:
+    type: CCI.Supervisor.Resource
+    properties:
+      count: ${variable.isDomainJoin ? 1:0}
+      context: ${resource.SupervisorNamespace.id}
+      manifest:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: ${variable.domainJoinSecretName}
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+        type: Opaque
+        stringData:
+          password: ${secret.ad-join-password}
+  DataDiskPVC01:
+    type: CCI.Supervisor.Resource
+    properties:
+      count: ${length(input.additionalDisks) > 0 ? 1:0}
+      context: ${resource.SupervisorNamespace.id}
+      manifest:
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        metadata:
+          name: pvc-${variable.hostname}-${to_lower(input.additionalDisks[0].driveLetter)}
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+          annotations:
+            vcf.vm/disk.driveLetter: ${input.additionalDisks[0].driveLetter}
+            vcf.vm/disk.driveName: ${input.additionalDisks[0].driveName}
+            vcf.vm/disk.sizeGb: ${format('%d', input.additionalDisks[0].sizeGb)}
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          storageClassName: ${variable.storageClass}
+          resources:
+            requests:
+              storage: ${format('%dGi', input.additionalDisks[0].sizeGb)}
+  DataDiskPVC02:
+    type: CCI.Supervisor.Resource
+    properties:
+      count: ${length(input.additionalDisks) > 1 ? 1:0}
+      context: ${resource.SupervisorNamespace.id}
+      manifest:
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        metadata:
+          name: pvc-${variable.hostname}-${to_lower(input.additionalDisks[1].driveLetter)}
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+          annotations:
+            vcf.vm/disk.driveLetter: ${input.additionalDisks[1].driveLetter}
+            vcf.vm/disk.driveName: ${input.additionalDisks[1].driveName}
+            vcf.vm/disk.sizeGb: ${format('%d', input.additionalDisks[1].sizeGb)}
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          storageClassName: ${variable.storageClass}
+          resources:
+            requests:
+              storage: ${format('%dGi', input.additionalDisks[1].sizeGb)}
+  DataDiskPVC03:
+    type: CCI.Supervisor.Resource
+    properties:
+      count: ${length(input.additionalDisks) > 2 ? 1:0}
+      context: ${resource.SupervisorNamespace.id}
+      manifest:
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        metadata:
+          name: pvc-${variable.hostname}-${to_lower(input.additionalDisks[2].driveLetter)}
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+          annotations:
+            vcf.vm/disk.driveLetter: ${input.additionalDisks[2].driveLetter}
+            vcf.vm/disk.driveName: ${input.additionalDisks[2].driveName}
+            vcf.vm/disk.sizeGb: ${format('%d', input.additionalDisks[2].sizeGb)}
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          storageClassName: ${variable.storageClass}
+          resources:
+            requests:
+              storage: ${format('%dGi', input.additionalDisks[2].sizeGb)}
+  WindowsVM:
+    type: CCI.Supervisor.Resource
+    dependsOn:
+      - BootstrapSecret
+      - DomainJoinSecret
+      - DataDiskPVC01
+      - DataDiskPVC02
+      - DataDiskPVC03
+    properties:
+      context: ${resource.SupervisorNamespace.id}
+      wait:
+        conditions:
+          - type: VirtualMachineCreated
+            status: 'True'
+          - type: GuestCustomization
+            status: 'True'
+      manifest:
+        apiVersion: vmoperator.vmware.com/v1alpha3
+        kind: VirtualMachine
+        metadata:
+          name: ${variable.hostname}
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+          annotations: ${variable.commonAnnotations}
+        spec:
+          className: ${input.vmClass}
+          imageName: ${input.windowsImage}
+          storageClass: ${variable.storageClass}
+          powerState: PoweredOn
+          volumes: '${map_by(input.additionalDisks, disk => {''name'':''pvc-'' + variable.hostname + ''-'' + to_lower(disk.driveLetter), ''persistentVolumeClaim'': {''claimName'':''pvc-'' + variable.hostname + ''-'' + to_lower(disk.driveLetter)}})}'
+          network:
+            interfaces:
+              - name: eth0
+                network:
+                  name: ${input.subnetName}
+                  kind: Subnet
+            hostName: ${variable.hostname}
+            domainName: ${variable.isDomainJoin ? input.domainName:''}
+            nameservers:
+              - ${variable.dnsServer01}
+            searchDomains: ${variable.isDomainJoin ? [input.domainName]:[]}
+          bootstrap:
+            sysprep:
+              sysprep:
+                guiUnattended:
+                  autoLogon: true
+                  autoLogonCount: 1
+                  password:
+                    name: ${variable.bootstrapSecretName}
+                    key: localAdminPassword
+                guiRunOnce:
+                  commands: ${['cmd.exe /c exit 0'] + map_by(input.additionalDisks, disk => 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$disk = Get-Disk | Where-Object PartitionStyle -eq RAW | Sort-Object Number | Select-Object -First 1; if ($null -ne $disk) { Initialize-Disk -Number $disk.Number -PartitionStyle GPT -PassThru | New-Partition -DriveLetter ' + disk.driveLetter + ' -UseMaximumSize | Format-Volume -FileSystem NTFS -NewFileSystemLabel ' + disk.driveName + ' -Confirm:$false }"')}
+                userData:
+                  fullName: ${split(env.requestedBy, '@')[0]}
+                  orgName: ${variable.orgName}
+                  computerName: ${variable.hostname}
+                identification: '${variable.isDomainJoin ? {''joinDomain'': input.domainName, ''domainAdmin'': variable.svcAccount, ''domainAdminPassword'': {''name'': variable.domainJoinSecretName, ''key'': ''password''}} : {''joinWorkgroup'': ''WORKGROUP''}}'
+outputs:
+  hostname:
+    value: ${variable.isDomainJoin ? variable.hostname + '.' + input.domainName:variable.hostname}
+  ipAddress:
+    value: ${resource.WindowsVM.object.status.network.primaryIP4}
+  namespace:
+    value: ${variable.namespace}
+  vmClass:
+    value: ${input.vmClass}
+  additionalDisks:
+    value: ${input.additionalDisks}
+  __deploymentOverview:
+    value: |-
+      ## CBRE Windows VM
+
+      | Field | Value |
+      | --- | --- |
+      | Hostname | ${variable.hostname} |
+      | Domain / Workgroup | ${input.domainName} |
+      | Domain Join | ${variable.isDomainJoin ? 'Requested':'Not requested'} |
+      | IP Address | ${resource.WindowsVM.object.status.network.primaryIP4} |
+      | Namespace | ${variable.namespace} |
+      | VM Class | ${input.vmClass} |
+      | Storage Class | ${input.storageClass} |
+      | Additional Disks | ${length(input.additionalDisks)} |
