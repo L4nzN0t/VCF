@@ -78,8 +78,10 @@ variables:
   fqdn: ${variable.hostname}.${variable.domainName}
   dnsZone: ${propgroup.domainName.dnsZone}
   dnsServer01: ${propgroup.dnsServers.dnsServer01}
+  isPrivateSubnet: ${input.subnetName == 'subnet-vm-app-private'}
+  sshServiceName: svc-${variable.hostname}-ssh
   commonLabels:
-    app.kubernetes.io/name: sftp-server
+    app.kubernetes.io/name: ubuntu-vm
     app.kubernetes.io/instance: ${variable.hostname}
     vcf.vm/vmName: ${variable.hostname}
     vcf.vm/owner: ${split(env.requestedBy, '@')[0]}
@@ -87,21 +89,23 @@ variables:
     vcf.vm/requestedBy: ${env.requestedBy}
     vcf.vm/domainName: ${variable.domainName}
     vcf.vm/dnsZone: ${variable.dnsZone}
+    vcf.vm/subnetName: ${input.subnetName}
 resources:
   SupervisorNamespace:
     type: CCI.Supervisor.Namespace
     properties:
       name: ${variable.namespace}
       existing: true
-  sftpService:
+  SshService:
     type: CCI.Supervisor.Resource
     properties:
+      count: ${variable.isPrivateSubnet ? 1:0}
       context: ${resource.SupervisorNamespace.id}
       manifest:
         apiVersion: vmoperator.vmware.com/v1alpha3
         kind: VirtualMachineService
         metadata:
-          name: svc-${variable.hostname}-sftp
+          name: ${variable.sshServiceName}
           namespace: ${variable.namespace}
           labels: ${variable.commonLabels}
         spec:
@@ -109,11 +113,11 @@ resources:
           selector:
             app.kubernetes.io/instance: ${variable.hostname}
           ports:
-            - name: sftp
+            - name: ssh
               port: 22
               protocol: TCP
               targetPort: 22
-  sftpSecret:
+  BootstrapSecret:
     type: CCI.Supervisor.Resource
     properties:
       context: ${resource.SupervisorNamespace.id}
@@ -121,23 +125,23 @@ resources:
         apiVersion: v1
         kind: Secret
         metadata:
-          name: ${variable.hostname}-secret
+          name: vm-${variable.hostname}-bootstrap
           namespace: ${variable.namespace}
           labels: ${variable.commonLabels}
+        type: Opaque
         stringData:
           adminPassword: ${secret.linux-admin-password}
-          sftpPassword: ${secret.sftp-user-password}
-
-  SftpVM:
+  UbuntuVM:
     type: CCI.Supervisor.Resource
     dependsOn:
-      - sftpSecret
-      - sftpService
+      - BootstrapSecret
     properties:
       context: ${resource.SupervisorNamespace.id}
       wait:
         conditions:
           - type: VirtualMachineCreated
+            status: 'True'
+          - type: GuestCustomization
             status: 'True'
       manifest:
         apiVersion: vmoperator.vmware.com/v1alpha3
@@ -152,11 +156,12 @@ resources:
           imageName: ${input.linuxImage}
           storageClass: ${variable.storageClass}
           powerState: PoweredOn
-          volumes:
-            - name: sftp-storage
-              persistentVolumeClaim:
-                claimName: pvc-sftp-${variable.hostname}
           network:
+            interfaces:
+              - name: eth0
+                network:
+                  name: ${input.subnetName}
+                  kind: Subnet
             hostName: ${variable.hostname}
             domainName: ${variable.domainName}
             nameservers:
@@ -172,15 +177,13 @@ resources:
                   - openssh-server
                 disable_root: false
                 ssh_pwauth: true
-                groups:
-                  - sftpusers
                 users:
                   - name: ${input.adminUsername}
                     shell: /bin/bash
                     lock_passwd: false
-                    sudo: ALL=(ALL) NOPASSWD:ALL
+                    sudo: ALL=(ALL) ALL
                     passwd:
-                      name: ${variable.hostname}-secret
+                      name: vm-${variable.hostname}-bootstrap
                       key: adminPassword
                 # write_files:
                 #   - path: /etc/ssh/sshd_config.d/sftp_config.conf
@@ -224,15 +227,21 @@ outputs:
     value: ${variable.fqdn}
   namespace:
     value: ${variable.namespace}
-  sftpServiceName:
-    value: svc-${variable.hostname}-sftp
-  sftpExternalIp:
-    value: ${resource.sftpService.object.status.loadBalancer.ingress[0].ip}
+  subnetName:
+    value: ${input.subnetName}
+  networkAccess:
+    value: ${variable.isPrivateSubnet ? 'private-load-balancer':'public-direct'}
+  ipAddress:
+    value: ${variable.isPrivateSubnet ? resource.SshService[0].object.status.loadBalancer.ingress[0].ip:resource.UbuntuVM.object.status.network.primaryIP4}
+  sshServiceName:
+    value: ${variable.isPrivateSubnet ? variable.sshServiceName:'not-required'}
+  sshEndpoint:
+    value: ${variable.isPrivateSubnet ? resource.SshService[0].object.status.loadBalancer.ingress[0].ip + ':22':resource.UbuntuVM.object.status.network.primaryIP4 + ':22'}
   __deploymentOverview:
     value: |-
-      ## SFTP Server Deployment
+      ## Ubuntu VM Deployment
 
-      Your SFTP server deployment completed successfully.
+      Your Ubuntu virtual machine deployment completed successfully.
 
       #### Machine Summary
 
@@ -240,63 +249,55 @@ outputs:
       | --- | --- |
       | Name | ${variable.hostname} |
       | FQDN | ${variable.fqdn} |
-      | Operating System | Linux |
+      | Operating System | Ubuntu |
       | Image | ${input.linuxImage} |
       | Requested By | ${env.requestedBy} |
       | Namespace | ${variable.namespace} |
       | VM Class | ${input.vmClass} |
       | Storage Class | ${input.storageClass} |
 
-      #### SFTP Access
+      #### Network and SSH Access
 
       | Field | Value |
       | --- | --- |
+      | Subnet | ${input.subnetName} |
+      | Access Type | ${variable.isPrivateSubnet ? 'Private subnet through load balancer':'Direct public subnet access'} |
+      | IP Address | ${variable.isPrivateSubnet ? resource.SshService[0].object.status.loadBalancer.ingress[0].ip:resource.UbuntuVM.object.status.network.primaryIP4} |
+      | SSH Endpoint | ${variable.isPrivateSubnet ? resource.SshService[0].object.status.loadBalancer.ingress[0].ip + ':22':resource.UbuntuVM.object.status.network.primaryIP4 + ':22'} |
+      | Load Balancer Service | ${variable.isPrivateSubnet ? variable.sshServiceName:'Not required'} |
+      | Admin SSH User | ${input.adminUsername} |
       | DNS Domain | ${variable.domainName} |
       | DNS Zone | ${variable.dnsZone} |
-      | Name Servers | ${variable.dnsServer01} |
-      | Load Balancer Service | svc-${variable.hostname}-sftp |
-      | External IP | ${resource.sftpService.object.status.loadBalancer.ingress[0].ip} |
-      | Admin SSH User | ${input.adminUsername} |
-
-      #### Lifecycle Tasks
-
-      | Task | Status |
-      | --- | --- |
-      | Cloud Init | Installs OpenSSH, creates the admin and SFTP users, and restarts SSH. |
-      | SFTP Configuration | Configured with an SSH drop-in file for a chrooted SFTP-only user. |
-      | DNS Record | Handled by post-deployment automation from the DNS payload. |
-      | SFTP IP Label | vcf.vm/sftpExternalIp |
-      | Upload Path | /upload |
+      | Name Server | ${variable.dnsServer01} |
 postDeploymentPayload:
   value:
     vmName: ${variable.hostname}
     fqdn: ${variable.fqdn}
     namespace: ${variable.namespace}
     osType: linux
-    workloadType: sftp
+    workloadType: ubuntu-vm
     requestedBy: ${env.requestedBy}
     domainName: ${variable.domainName}
     dnsZone: ${variable.dnsZone}
     vmClass: ${input.vmClass}
     storageClass: ${input.storageClass}
     linuxImage: ${input.linuxImage}
-    sftpUsername: ${input.sftpUsername}
-    sftpServiceName: svc-${variable.hostname}-sftp
-    sftpExternalIp: ${resource.sftpService.object.status.loadBalancer.ingress[0].ip}
+    subnetName: ${input.subnetName}
+    networkAccess: ${variable.isPrivateSubnet ? 'private-load-balancer':'public-direct'}
+    sshServiceName: ${variable.isPrivateSubnet ? variable.sshServiceName:'not-required'}
+    ipAddress: ${variable.isPrivateSubnet ? resource.SshService[0].object.status.loadBalancer.ingress[0].ip:resource.UbuntuVM.object.status.network.primaryIP4}
     dnsRecord:
       action: create
       type: A
       name: ${variable.hostname}
       zone: ${variable.dnsZone}
       fqdn: ${variable.fqdn}
-      address: ${resource.sftpService.object.status.loadBalancer.ingress[0].ip}
+      address: ${variable.isPrivateSubnet ? resource.SshService[0].object.status.loadBalancer.ingress[0].ip:resource.UbuntuVM.object.status.network.primaryIP4}
     labelPatch:
-      vcf.vm/sftpExternalIp: ${resource.sftpService.object.status.loadBalancer.ingress[0].ip}
+      vcf.vm/ipAddress: ${variable.isPrivateSubnet ? resource.SshService[0].object.status.loadBalancer.ingress[0].ip:resource.UbuntuVM.object.status.network.primaryIP4}
       vcf.vm/fqdn: ${variable.fqdn}
     vCenterTags:
-      app.kubernetes.io/name: sftp-server
+      app.kubernetes.io/name: ubuntu-vm
       app.kubernetes.io/instance: ${variable.hostname}
       vcf.vm/vmName: ${variable.hostname}
-      vcf.vm/application: ${input.application}
-      vcf.vm/environment: ${input.environment}
       vcf.vm/owner: ${split(env.requestedBy, '@')[0]}
