@@ -118,10 +118,6 @@ inputs:
     type: boolean
     title: Join AD Domain
     default: true
-  exposeRemoteAccess:
-    type: boolean
-    title: Expose Remote Access Load Balancer
-    default: true
 variables:
   hostname: ${to_lower(input.vmName)}
   namespace: ${input.namespaceName}
@@ -147,31 +143,6 @@ resources:
     properties:
       name: ${variable.namespace}
       existing: true
-  RemoteAccessService:
-    type: CCI.Supervisor.Resource
-    properties:
-      count: ${input.exposeRemoteAccess ? 1:0}
-      context: ${resource.SupervisorNamespace.id}
-      manifest:
-        apiVersion: vmoperator.vmware.com/v1alpha3
-        kind: VirtualMachineService
-        metadata:
-          name: svc-${variable.hostname}
-          namespace: ${variable.namespace}
-          labels: ${variable.commonLabels}
-        spec:
-          selector:
-            app.kubernetes.io/instance: ${variable.hostname}
-          type: LoadBalancer
-          ports:
-            - name: rdp
-              port: 3389
-              protocol: TCP
-              targetPort: 3389
-            - name: ssh
-              port: 22
-              protocol: TCP
-              targetPort: 22
   BootstrapSecret:
     type: CCI.Supervisor.Resource
     properties:
@@ -286,6 +257,11 @@ resources:
           powerState: PoweredOn
           volumes: '${map_by(input.additionalDisks, disk => {''name'':''pvc-'' + variable.hostname + ''-'' + to_lower(disk.driveLetter), ''persistentVolumeClaim'': {''claimName'':''pvc-'' + variable.hostname + ''-'' + to_lower(disk.driveLetter)}})}'
           network:
+            interfaces:
+              - name: eth0
+                network:
+                  name: subnet-vm-app-public
+                  kind: Subnet
             hostName: ${variable.hostname}
             domainName: ${input.domainName}
             nameservers:
@@ -316,12 +292,10 @@ resources:
 outputs:
   hostname:
     value: ${variable.hostname}.${input.domainName}
+  ipAddress:
+    value: ${resource.WindowsVM.object.status.network.primaryIP4}
   namespace:
     value: ${variable.namespace}
-  remoteAccessServiceName:
-    value: ${input.exposeRemoteAccess ? 'svc-' + variable.hostname:'not-exposed'}
-  remoteAccessExternalIp:
-    value: ${input.exposeRemoteAccess ? resource.RemoteAccessService[0].object.status.loadBalancer.ingress[0].ip:'not-exposed'}
   additionalDisks:
     value: ${input.additionalDisks}
   __deploymentOverview:
@@ -336,6 +310,7 @@ outputs:
       | --- | --- |
       | Name | ${variable.hostname} |
       | FQDN | ${variable.hostname}.${input.domainName} |
+      | IP Address | ${resource.WindowsVM.object.status.network.primaryIP4} |
       | Operating System | Windows Server |
       | Application | ${input.application} |
       | Environment | ${input.environment} |
@@ -352,11 +327,6 @@ outputs:
       | DNS Domain | ${input.domainName} |
       | DNS Zone | ${variable.dnsZone} |
       | Name Servers | ${variable.dnsServer01} |
-      | Remote Access | ${input.exposeRemoteAccess ? 'Enabled':'Disabled'} |
-      | Load Balancer Service | ${input.exposeRemoteAccess ? 'svc-' + variable.hostname:'not-exposed'} |
-      | Load Balancer External IP | ${input.exposeRemoteAccess ? resource.RemoteAccessService[0].object.status.loadBalancer.ingress[0].ip:'not-exposed'} |
-      | RDP | ${input.exposeRemoteAccess ? resource.RemoteAccessService[0].object.status.loadBalancer.ingress[0].ip + ':3389':'internal network only'} |
-      | SSH | ${input.exposeRemoteAccess ? resource.RemoteAccessService[0].object.status.loadBalancer.ingress[0].ip + ':22':'internal network only'} |
 
       #### Lifecycle Tasks
 
@@ -364,7 +334,6 @@ outputs:
       | --- | --- |
       | AD Domain Join | ${input.joinDomain ? 'Requested':'Not requested'} |
       | DNS Record | Handled by post-deployment automation |
-      | LB IP Label | vcf.vm/loadBalancerExternalIp |
       | vCenter Tags | Handled by post-deployment automation from the VM labels |
 
       If the load balancer IP is blank, refresh the deployment after the Supervisor load balancer controller assigns an external address.
@@ -372,6 +341,7 @@ postDeploymentPayload:
   value:
     vmName: ${variable.hostname}
     fqdn: ${variable.hostname}.${input.domainName}
+    ipAddress: ${resource.WindowsVM.object.status.network.primaryIP4}
     namespace: ${variable.namespace}
     osType: windows
     environment: ${input.environment}
@@ -379,16 +349,11 @@ postDeploymentPayload:
     requestedBy: ${env.requestedBy}
     domainName: ${input.domainName}
     domainJoinRequested: ${input.joinDomain}
-    dnsZone: ${variable.domainName}
+    dnsZone: ${variable.dnsZone}
     vmClass: ${input.vmClass}
     storageClass: ${input.storageClass}
     additionalDisksRequested: ${length(input.additionalDisks) > 0}
     additionalDisks: ${input.additionalDisks}
-    remoteAccessEnabled: ${input.exposeRemoteAccess}
-    remoteAccessServiceName: ${input.exposeRemoteAccess ? 'svc-' + variable.hostname:'not-exposed'}
-    remoteAccessExternalIp: ${input.exposeRemoteAccess ? resource.RemoteAccessService[0].object.status.loadBalancer.ingress[0].ip:'not-exposed'}
-    labelPatch:
-      vcf.vm/loadBalancerExternalIp: ${input.exposeRemoteAccess ? resource.RemoteAccessService[0].object.status.loadBalancer.ingress[0].ip:'not-exposed'}
     vCenterTags:
       app.kubernetes.io/name: vm-lifecycle
       app.kubernetes.io/instance: ${variable.hostname}

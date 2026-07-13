@@ -3,6 +3,9 @@
 nested_lab/
 customers/
 private/
+temp/
+
+reads.md
 
 
 # Ignore all files ending with a specific extension

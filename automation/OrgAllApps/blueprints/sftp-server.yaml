@@ -4,7 +4,7 @@ version: 1
 inputs:
   vmName:
     type: string
-    title: Server Name
+    title: SFTP Server Name
     description: Lowercase DNS-safe name for the SFTP endpoint.
     minLength: 3
     maxLength: 15
@@ -23,14 +23,6 @@ inputs:
     title: Virtual Machine Size
     description: Select an allowed VM class for the target namespace.
     $data: /data/virtualmachineclasses?namespace={{namespaceName}}
-  subnetName:
-    type: string
-    title: Virtual Machine Subnet
-    description: Existing Supervisor Subnet resource used by the VM network interface.
-    default: subnet-vm-app-private
-    enum:
-      - subnet-vm-app-public
-      - subnet-vm-app-private
   linuxImage:
     type: string
     title: Linux Image
@@ -41,13 +33,13 @@ inputs:
         const: vmi-4dcd43492500fbe61
       - title: Ubuntu Server 24.04
         const: ubuntu-2404
-  # PvcSize:
-  #   type: integer
-  #   title: SFTP Volume Size (GB)
-  #   description: Size of the persistent volume for SFTP storage.
-  #   default: 10
-  #   minimum: 1
-  #   maximum: 100
+  sftpPvcSize:
+    type: integer
+    title: SFTP Volume Size (GB)
+    description: Size of the persistent volume for SFTP storage.
+    default: 10
+    minimum: 1
+    maximum: 100
   adminUsername:
     type: string
     title: Admin SSH User
@@ -55,21 +47,21 @@ inputs:
     minLength: 2
     maxLength: 32
     pattern: ^[a-z_][a-z0-9_-]*$
-  # sftpUsername:
-  #   type: string
-  #   title: SFTP User
-  #   default: sftpuser
-  #   minLength: 2
-  #   maxLength: 32
-  #   pattern: ^[a-z_][a-z0-9_-]*$
-  # sftpPassword:
-  #   type: string
-  #   encrypted: true
-  #   title: SFTP Password
-  # allowPasswordlessSudo:
-  #   type: boolean
-  #   title: Allow Admin Passwordless Sudo
-  #   default: true
+  sftpUsername:
+    type: string
+    title: SFTP User
+    default: sftpuser
+    minLength: 2
+    maxLength: 32
+    pattern: ^[a-z_][a-z0-9_-]*$
+  sftpPassword:
+    type: string
+    encrypted: true
+    title: SFTP Password
+  allowPasswordlessSudo:
+    type: boolean
+    title: Allow Admin Passwordless Sudo
+    default: true
 variables:
   hostname: ${to_lower(input.vmName)}
   domainName: ${propgroup.domainName.domainController}
@@ -87,6 +79,7 @@ variables:
     vcf.vm/requestedBy: ${env.requestedBy}
     vcf.vm/domainName: ${variable.domainName}
     vcf.vm/dnsZone: ${variable.dnsZone}
+    vcf.vm/sftpUser: ${input.sftpUsername}
 resources:
   SupervisorNamespace:
     type: CCI.Supervisor.Namespace
@@ -127,12 +120,33 @@ resources:
         stringData:
           adminPassword: ${secret.linux-admin-password}
           sftpPassword: ${secret.sftp-user-password}
-
+  sftpPvc:
+    type: CCI.Supervisor.Resource
+    properties:
+      context: ${resource.SupervisorNamespace.id}
+      manifest:
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        metadata:
+          name: pvc-sftp-${variable.hostname}
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+          annotations:
+            vcf.vm/disk.mountPath: /sftp
+            vcf.vm/disk.sizeGb: ${format('%d', input.sftpPvcSize)}
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          storageClassName: ${variable.storageClass}
+          resources:
+            requests:
+              storage: ${format('%dGi', input.sftpPvcSize)}
   SftpVM:
     type: CCI.Supervisor.Resource
     dependsOn:
       - sftpSecret
       - sftpService
+      - sftpPvc
     properties:
       context: ${resource.SupervisorNamespace.id}
       wait:
@@ -182,41 +196,48 @@ resources:
                     passwd:
                       name: ${variable.hostname}-secret
                       key: adminPassword
-                # write_files:
-                #   - path: /etc/ssh/sshd_config.d/sftp_config.conf
-                #     owner: root:root
-                #     permissions: '0644'
-                #     content: |
-                #       Match Group sftpusers
-                #         ChrootDirectory /sftp
-                #         PasswordAuthentication yes
-                #         PermitTunnel no
-                #         AllowAgentForwarding no
-                #         X11Forwarding no
-                #         AllowTcpForwarding yes
-                #         ForceCommand internal-sftp
-                # runcmd:
-                #   - |
-                #     set -eu
-                #     disk="$(lsblk -dnpo NAME,TYPE,MOUNTPOINT | awk '$2=="disk" && $3=="" {print $1}' | tail -n 1)"
-                #     if [ -n "$disk" ]; then
-                #       if ! blkid "$disk"; then
-                #         mkfs.ext4 -F "$disk"
-                #       fi
-                #       mkdir -p /sftp
-                #       uuid="$(blkid -s UUID -o value "$disk")"
-                #       if ! grep -q "$uuid" /etc/fstab; then
-                #         echo "UUID=$uuid /sftp ext4 defaults,nofail 0 2" >> /etc/fstab
-                #       fi
-                #       mount /sftp
-                #     fi
-                #   - mkdir -p /sftp/upload
-                #   - chown root:root /sftp
-                #   - chmod 755 /sftp /sftp/upload
-                #   - chown ${input.sftpUsername}:sftpusers /sftp/upload
-                #   - chmod 750 /sftp/upload
-                #   - systemctl enable ssh || systemctl enable sshd || true
-                #   - systemctl restart ssh || systemctl restart sshd || true
+                  - name: ${input.sftpUsername}
+                    lock_passwd: false
+                    groups:
+                      - sftpusers
+                    passwd:
+                      name: ${variable.hostname}-secret
+                      key: sftpPassword
+                write_files:
+                  - path: /etc/ssh/sshd_config.d/sftp_config.conf
+                    owner: root:root
+                    permissions: '0644'
+                    content: |
+                      Match Group sftpusers
+                        ChrootDirectory /sftp
+                        PasswordAuthentication yes
+                        PermitTunnel no
+                        AllowAgentForwarding no
+                        X11Forwarding no
+                        AllowTcpForwarding yes
+                        ForceCommand internal-sftp
+                runcmd:
+                  - |
+                    set -eu
+                    disk="$(lsblk -dnpo NAME,TYPE,MOUNTPOINT | awk '$2=="disk" && $3=="" {print $1}' | tail -n 1)"
+                    if [ -n "$disk" ]; then
+                      if ! blkid "$disk"; then
+                        mkfs.ext4 -F "$disk"
+                      fi
+                      mkdir -p /sftp
+                      uuid="$(blkid -s UUID -o value "$disk")"
+                      if ! grep -q "$uuid" /etc/fstab; then
+                        echo "UUID=$uuid /sftp ext4 defaults,nofail 0 2" >> /etc/fstab
+                      fi
+                      mount /sftp
+                    fi
+                  - mkdir -p /sftp/upload
+                  - chown root:root /sftp
+                  - chmod 755 /sftp /sftp/upload
+                  - chown ${input.sftpUsername}:sftpusers /sftp/upload
+                  - chmod 750 /sftp/upload
+                  - systemctl enable ssh || systemctl enable sshd || true
+                  - systemctl restart ssh || systemctl restart sshd || true
 outputs:
   hostname:
     value: ${variable.hostname}
@@ -224,10 +245,14 @@ outputs:
     value: ${variable.fqdn}
   namespace:
     value: ${variable.namespace}
+  sftpUsername:
+    value: ${input.sftpUsername}
   sftpServiceName:
     value: svc-${variable.hostname}-sftp
   sftpExternalIp:
     value: ${resource.sftpService.object.status.loadBalancer.ingress[0].ip}
+  sftpEndpoint:
+    value: ${input.sftpUsername}@${variable.fqdn}:22
   __deploymentOverview:
     value: |-
       ## SFTP Server Deployment
@@ -257,6 +282,8 @@ outputs:
       | Load Balancer Service | svc-${variable.hostname}-sftp |
       | External IP | ${resource.sftpService.object.status.loadBalancer.ingress[0].ip} |
       | Admin SSH User | ${input.adminUsername} |
+      | SFTP User | ${input.sftpUsername} |
+      | SFTP Endpoint | ${input.sftpUsername}@${variable.fqdn}:22 |
 
       #### Lifecycle Tasks
 

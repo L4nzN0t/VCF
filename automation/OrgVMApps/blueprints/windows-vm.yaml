@@ -238,6 +238,50 @@ outputs:
     value: ${input.ipAssignment == 'static' ? input.requestedIpAddress:'automatic'}
   guestPrimaryIp:
     value: ${resource.WindowsVM.address}
+  __deploymentOverview:
+    value: |-
+      ## Windows VM Deployment
+
+      Your Windows virtual machine deployment completed successfully.
+
+      #### Machine Summary
+
+      | Field | Value |
+      | --- | --- |
+      | Name | ${variable.hostname} |
+      | FQDN | ${variable.hostname}.${input.domainName} |
+      | Operating System | Windows Server |
+      | Application | ${input.application} |
+      | Environment | ${input.environment} |
+      | Requested By | ${env.requestedBy} |
+      | Image | ${input.image} |
+      | Flavor | ${input.flavor} |
+      | Storage Tier | ${input.storageTier} |
+
+      #### Network and Access
+
+      | Field | Value |
+      | --- | --- |
+      | Network | ${input.network} |
+      | Network Tag | ${variable.networkTag} |
+      | IP Assignment | ${input.ipAssignment} |
+      | Requested IP | ${input.ipAssignment == 'static' ? input.requestedIpAddress:'automatic'} |
+      | Guest Primary IP | ${resource.WindowsVM.address} |
+      | DNS Domain | ${input.domainName} |
+      | DNS Zone | ${input.dnsZone} |
+      | Name Servers | ${variable.dnsServer01}, ${variable.dnsServer02} |
+
+      #### Lifecycle Tasks
+
+      | Task | Status |
+      | --- | --- |
+      | AD Domain Join | ${input.joinDomain ? 'Requested':'Not requested'} |
+      | Target OU | ${input.adOuPath} |
+      | Customization Spec | ${input.customizationSpec} |
+      | DNS Record | Handled by post-deployment automation |
+      | VM IP Label | vcf.vm/primaryIp |
+      | vCenter Tags | Handled by post-deployment automation from the VM tags and custom properties |
+      | Placement Tags | ${variable.locationTag}, ${variable.storageTag}, ${variable.flavorTag} |
 postDeploymentPayload:
   value:
     vmName: ${variable.hostname}
@@ -273,125 +317,3 @@ postDeploymentPayload:
       vcf.vm/application: ${input.application}
       vcf.vm/environment: ${input.environment}
       vcf.vm/owner: ${variable.owner}
-  __deploymentOverview:
-    value: |-
-      ## Windows VM Deployment
-
-      Your Windows virtual machine deployment completed successfully.
-
-      ---
-
-      #### Machine Summary
-
-      <table class="table table-vertical table-compact">
-        <tr>
-          <th class="left">Name</th>
-          <td><strong>${variable.hostname}</strong></td>
-        </tr>
-        <tr>
-          <th class="left">FQDN</th>
-          <td><code>${variable.hostname}.${input.domainName}</code></td>
-        </tr>
-        <tr>
-          <th class="left">Operating System</th>
-          <td><span class="label label-info">Windows Server</span></td>
-        </tr>
-        <tr>
-          <th class="left">Application</th>
-          <td>${input.application}</td>
-        </tr>
-        <tr>
-          <th class="left">Environment</th>
-          <td><span class="label label-default">${input.environment}</span></td>
-        </tr>
-        <tr>
-          <th class="left">Requested By</th>
-          <td>${env.requestedBy}</td>
-        </tr>
-        <tr>
-          <th class="left">Image</th>
-          <td>${input.image}</td>
-        </tr>
-        <tr>
-          <th class="left">Flavor</th>
-          <td>${input.flavor}</td>
-        </tr>
-        <tr>
-          <th class="left">Storage Tier</th>
-          <td>${input.storageTier}</td>
-        </tr>
-      </table>
-
-      ---
-
-      #### Network and Access
-
-      <table class="table table-vertical table-compact">
-        <tr>
-          <th class="left">Network</th>
-          <td><code>${input.network}</code></td>
-        </tr>
-        <tr>
-          <th class="left">Network Tag</th>
-          <td><code>${variable.networkTag}</code></td>
-        </tr>
-        <tr>
-          <th class="left">IP Assignment</th>
-          <td>${input.ipAssignment}</td>
-        </tr>
-        <tr>
-          <th class="left">Requested IP</th>
-          <td><code>${input.ipAssignment == 'static' ? input.requestedIpAddress:'automatic'}</code></td>
-        </tr>
-        <tr>
-          <th class="left">Guest Primary IP</th>
-          <td><code>${resource.WindowsVM.address}</code></td>
-        </tr>
-        <tr>
-          <th class="left">DNS Domain</th>
-          <td>${input.domainName}</td>
-        </tr>
-        <tr>
-          <th class="left">DNS Zone</th>
-          <td>${input.dnsZone}</td>
-        </tr>
-        <tr>
-          <th class="left">Name Servers</th>
-          <td><code>${variable.dnsServer01}</code>, <code>${variable.dnsServer02}</code></td>
-        </tr>
-      </table>
-
-      ---
-
-      #### Lifecycle Tasks
-
-      <table class="table table-vertical table-compact">
-        <tr>
-          <th class="left">AD Domain Join</th>
-          <td>${input.joinDomain ? 'Requested':'Not requested'}</td>
-        </tr>
-        <tr>
-          <th class="left">Target OU</th>
-          <td><code>${input.adOuPath}</code></td>
-        </tr>
-        <tr>
-          <th class="left">Customization Spec</th>
-          <td><code>${input.customizationSpec}</code></td>
-        </tr>
-        <tr>
-          <th class="left">DNS Record</th>
-          <td>Handled by post-deployment automation</td>
-        </tr>
-        <tr>
-          <th class="left">VM IP Label</th>
-          <td><code>vcf.vm/primaryIp</code></td>
-        </tr>
-        <tr>
-          <th class="left">vCenter Tags</th>
-          <td>Handled by post-deployment automation from the VM tags and custom properties</td>
-        </tr>
-        <tr>
-          <th class="left">Placement Tags</th>
-          <td><code>${variable.locationTag}</code>, <code>${variable.storageTag}</code>, <code>${variable.flavorTag}</code></td>
-        </tr>
-      </table>
