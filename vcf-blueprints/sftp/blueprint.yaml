@@ -1,6 +1,6 @@
 formatVersion: 2
 name: SFTP Server
-version: 2
+version: 3
 inputs:
   vmName:
     type: string
@@ -263,8 +263,7 @@ outputs:
 
       | Field | Value |
       | --- | --- |
-      | Name | ${variable.hostname} |
-      | FQDN | ${variable.fqdn} |
+      | VM Name | ${variable.hostname} |
       | Operating System | Linux |
       | Image | ${input.linuxImage} |
       | Requested By | ${env.requestedBy} |
@@ -272,18 +271,30 @@ outputs:
       | VM Class | ${input.vmClass} |
       | Storage Class | ${input.storageClass} |
 
+      #### Network Summary
+
+      | Field | Value |
+      | --- | --- |
+      | FQDN | ${variable.fqdn} |
+      | DNS Zone | ${variable.dnsZone} |
+      | Name Servers | ${variable.dnsServer01} |
+      | IP Address | ${resource.sftpService.object.status.loadBalancer.ingress[0].ip} |
+      | Load Balancer Service | svc-${variable.hostname}-sftp |
+
       #### SFTP Access
 
       | Field | Value |
       | --- | --- |
-      | DNS Domain | ${variable.domainName} |
-      | DNS Zone | ${variable.dnsZone} |
-      | Name Servers | ${variable.dnsServer01} |
-      | Load Balancer Service | svc-${variable.hostname}-sftp |
-      | External IP | ${resource.sftpService.object.status.loadBalancer.ingress[0].ip} |
-      | Admin SSH User | ${input.adminUsername} |
       | SFTP User | ${input.sftpUsername} |
-      | SFTP Endpoint | ${input.sftpUsername}@${variable.fqdn}:22 |
+      | SFTP Endpoint | ${resource.SftpVM.object.status.network.primaryIP4}:22 |
+      | Upload Path | /upload |
+
+
+      #### SSH Connection
+
+      ```console
+      $ ssh ${input.adminUsername}@${resource.SftpVM.object.status.network.primaryIP4}
+      ```
 
       #### Lifecycle Tasks
 
@@ -291,9 +302,6 @@ outputs:
       | --- | --- |
       | Cloud Init | Installs OpenSSH, creates the admin and SFTP users, and restarts SSH. |
       | SFTP Configuration | Configured with an SSH drop-in file for a chrooted SFTP-only user. |
-      | DNS Record | Handled by post-deployment automation from the DNS payload. |
-      | SFTP IP Label | vcf.vm/sftpExternalIp |
-      | Upload Path | /upload |
 postDeploymentPayload:
   value:
     vmName: ${variable.hostname}
