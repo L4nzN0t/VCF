@@ -1,6 +1,6 @@
 formatVersion: 2
 name: SFTP Server
-version: 5
+version: 6
 inputs:
   vmName:
     type: string
@@ -64,10 +64,9 @@ inputs:
     default: true
 variables:
   hostname: ${to_lower(input.vmName)}
-  domainName: ${propgroup.domainName.domainController}
   namespace: ${input.namespaceName}
   storageClass: ${input.storageClass}
-  fqdn: ${variable.hostname}.${variable.domainName}
+  fqdn: ${variable.hostname}.${propgroup.domainName.dnsZone}
   dnsZone: ${propgroup.domainName.dnsZone}
   dnsServer01: ${propgroup.dnsServers.dnsServer01}
   commonLabels:
@@ -77,7 +76,6 @@ variables:
     vcf.vm/owner: ${split(env.requestedBy, '@')[0]}
   commonAnnotations:
     vcf.vm/requestedBy: ${env.requestedBy}
-    vcf.vm/domainName: ${variable.domainName}
     vcf.vm/dnsZone: ${variable.dnsZone}
     vcf.vm/sftpUser: ${input.sftpUsername}
 resources:
@@ -94,7 +92,7 @@ resources:
         apiVersion: vmoperator.vmware.com/v1alpha3
         kind: VirtualMachineService
         metadata:
-          name: svc-${variable.hostname}-sftp
+          name: ${variable.hostname}-loadbalancer
           namespace: ${variable.namespace}
           labels: ${variable.commonLabels}
         spec:
@@ -128,7 +126,7 @@ resources:
         apiVersion: v1
         kind: PersistentVolumeClaim
         metadata:
-          name: pvc-sftp-${variable.hostname}
+          name: ${variable.hostname}-pvc
           namespace: ${variable.namespace}
           labels: ${variable.commonLabels}
           annotations:
@@ -169,14 +167,14 @@ resources:
           volumes:
             - name: sftp-storage
               persistentVolumeClaim:
-                claimName: pvc-sftp-${variable.hostname}
+                claimName: ${variable.hostname}-pvc
           network:
             hostName: ${variable.hostname}
-            domainName: ${variable.domainName}
+            domainName: ${variable.dnsZone}
             nameservers:
               - ${variable.dnsServer01}
             searchDomains:
-              - ${variable.domainName}
+              - ${variable.dnsZone}
           bootstrap:
             cloudInit:
               cloudConfig:
@@ -248,7 +246,7 @@ outputs:
   sftpUsername:
     value: ${input.sftpUsername}
   sftpServiceName:
-    value: svc-${variable.hostname}-sftp
+    value: ${variable.hostname}-loadbalancer
   sftpExternalIp:
     value: ${resource.sftpService.object.status.loadBalancer.ingress[0].ip}
   sftpEndpoint:
@@ -279,7 +277,7 @@ outputs:
       | DNS Zone | ${variable.dnsZone} |
       | Name Servers | ${variable.dnsServer01} |
       | IP Address | ${resource.sftpService.object.status.loadBalancer.ingress[0].ip} |
-      | Load Balancer Service | svc-${variable.hostname}-sftp |
+      | Load Balancer Service | ${variable.hostname}-loadbalancer |
 
       #### SFTP Access
 
@@ -310,13 +308,12 @@ postDeploymentPayload:
     osType: linux
     workloadType: sftp
     requestedBy: ${env.requestedBy}
-    domainName: ${variable.domainName}
     dnsZone: ${variable.dnsZone}
     vmClass: ${input.vmClass}
     storageClass: ${input.storageClass}
     linuxImage: ${input.linuxImage}
     sftpUsername: ${input.sftpUsername}
-    sftpServiceName: svc-${variable.hostname}-sftp
+    sftpServiceName: ${variable.hostname}-loadbalancer
     sftpExternalIp: ${resource.sftpService.object.status.loadBalancer.ingress[0].ip}
     dnsRecord:
       action: create
