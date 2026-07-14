@@ -31,12 +31,14 @@ inputs:
     $data: /data/virtualmachineclasses?namespace={{namespaceName}}
   subnetName:
     type: string
-    title: Supervisor Subnet
+    title: Virtual Machine Subnet
     description: Existing Supervisor Subnet resource used by the VM network interface.
-    default: subnet-vm-app-public
-    minLength: 1
-    maxLength: 63
-    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+    default: subnet-vm-app-private
+    oneOf:
+      - title: Public
+        const: subnet-vm-app-public
+      - title: Private
+        const: subnet-vm-app-private
   windowsImage:
     type: string
     title: Windows Image
