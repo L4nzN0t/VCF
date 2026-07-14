@@ -1,6 +1,6 @@
 formatVersion: 2
 name: SFTP Server
-version: 3
+version: 4
 inputs:
   vmName:
     type: string
