@@ -1,6 +1,6 @@
 formatVersion: 2
-name: cbre-windows-vm
-version: 3
+name: Windows Server
+version: 4
 inputs:
   vmName:
     type: string
