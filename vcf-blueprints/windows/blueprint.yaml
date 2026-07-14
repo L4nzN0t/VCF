@@ -1,6 +1,6 @@
 formatVersion: 2
 name: Windows Server
-version: 5
+version: 6
 inputs:
   vmName:
     type: string
@@ -278,6 +278,27 @@ resources:
           resources:
             requests:
               storage: ${format('%dGi', input.additionalDisks[2].sizeGb)}
+  WindowsService:
+    type: CCI.Supervisor.Resource
+    properties:
+      count: ${variable.isPrivateSubnet ? 1:0}
+      context: ${resource.SupervisorNamespace.id}
+      manifest:
+        apiVersion: vmoperator.vmware.com/v1alpha3
+        kind: VirtualMachineService
+        metadata:
+          name: ${variable.rdpService}
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+        spec:
+          type: LoadBalancer
+          selector:
+            app.kubernetes.io/instance: ${variable.hostname}
+          ports:
+            - name: rdp
+              port: 3389
+              protocol: TCP
+              targetPort: 3389
   WindowsVM:
     type: CCI.Supervisor.Resource
     dependsOn:
@@ -344,19 +365,39 @@ outputs:
     value: ${variable.namespace}
   vmClass:
     value: ${input.vmClass}
+  rdpServiceName:
+    value: ${variable.isPrivateSubnet ? variable.rdpService:'not-required'}
+  rdpEndpoint:
+    value: ${variable.isPrivateSubnet ? variable.rdpService + ':3389':resource.WindowsVM.object.status.network.primaryIP4 != null ? resource.WindowsVM.object.status.network.primaryIP4 + ':3389':'Pending IP assignment'}
   additionalDisks:
     value: ${input.additionalDisks}
   __deploymentOverview:
     value: |-
-      ## CBRE Windows VM
+      ## Windows VM Deployment Summary
+
+      #### Machine Summary
 
       | Field | Value |
       | --- | --- |
-      | Hostname | ${variable.hostname} |
-      | Domain / Workgroup | ${input.domainName} |
-      | Domain Join | ${variable.isDomainJoin ? 'Requested':'Not requested'} |
-      | IP Address | ${resource.WindowsVM.object.status.network.primaryIP4} |
+      | VM Name | ${variable.hostname} |
+      | Operating System | ${variable.linuxVersion} |
+      | Image | ${input.linuxImage} |
+      | Requested By | ${env.requestedBy} |
       | Namespace | ${variable.namespace} |
       | VM Class | ${input.vmClass} |
       | Storage Class | ${input.storageClass} |
       | Additional Disks | ${length(input.additionalDisks)} |
+
+      #### Network Summary
+
+      | Field | Value |
+      | --- | --- |
+      | FQDN | ${variable.hostname} |
+      | Domain / Workgroup | ${input.domainName} |
+      | Domain Join | ${variable.isDomainJoin ? 'Requested':'Not requested'} |
+      | IP Address | ${resource.WindowsVM.object.status.network.primaryIP4} |
+      | Subnet | ${input.subnetName} |
+      | Access Type | ${variable.isPrivateSubnet ? 'Private subnet through load balancer':'Direct public subnet access'} |
+      | Name Servers | ${variable.dnsServer01} |
+      | VM Primary IP | ${resource.WindowsVM.object.status.network.primaryIP4 != null ? resource.WindowsVM.object.status.network.primaryIP4:'Pending IP assignment'} |
+      | Load Balancer Service | ${variable.isPrivateSubnet ? variable.rdpServiceName:'Not required'} |

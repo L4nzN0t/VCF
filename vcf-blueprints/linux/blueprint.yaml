@@ -1,6 +1,6 @@
 formatVersion: 2
 name: Linux Server
-version: 3
+version: 5
 inputs:
   vmName:
     type: string
@@ -59,7 +59,7 @@ variables:
   dnsZone: ${propgroup.domainName.dnsZone}
   dnsServer01: ${propgroup.dnsServers.dnsServer01}
   isPrivateSubnet: ${input.subnetName == 'subnet-vm-app-private'}
-  sshServiceName: svc-${variable.hostname}-ssh
+  sshServiceName: ${variable.hostname}-service-ssh
   commonLabels:
     app.kubernetes.io/name: ubuntu-vm
     app.kubernetes.io/instance: ${variable.hostname}

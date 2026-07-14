@@ -65,6 +65,7 @@ inputs:
 variables:
   hostname: ${to_lower(input.vmName)}
   namespace: ${input.namespaceName}
+  linuxVersion: ${input.linuxImage == 'vmi-4dcd43492500fbe61' ? 'Ubuntu Server 22.04':input.linuxImage == 'ubuntu-2404' ? 'Ubuntu Server 24.04':'Unknown Linux version'}
   storageClass: ${input.storageClass}
   fqdn: ${variable.hostname}.${propgroup.domainName.dnsZone}
   dnsZone: ${propgroup.domainName.dnsZone}
@@ -243,6 +244,8 @@ outputs:
     value: ${variable.fqdn}
   namespace:
     value: ${variable.namespace}
+  linuxVersion:
+    value: ${variable.linuxVersion}
   sftpUsername:
     value: ${input.sftpUsername}
   sftpServiceName:
@@ -262,7 +265,7 @@ outputs:
       | Field | Value |
       | --- | --- |
       | VM Name | ${variable.hostname} |
-      | Operating System | Linux |
+      | Operating System | ${variable.linuxVersion} |
       | Image | ${input.linuxImage} |
       | Requested By | ${env.requestedBy} |
       | Namespace | ${variable.namespace} |
@@ -306,6 +309,7 @@ postDeploymentPayload:
     fqdn: ${variable.fqdn}
     namespace: ${variable.namespace}
     osType: linux
+    linuxVersion: ${variable.linuxVersion}
     workloadType: sftp
     requestedBy: ${env.requestedBy}
     dnsZone: ${variable.dnsZone}
