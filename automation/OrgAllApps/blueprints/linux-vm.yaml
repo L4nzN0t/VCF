@@ -123,6 +123,10 @@ resources:
         conditions:
           - type: VirtualMachineCreated
             status: 'True'
+          - type: VirtualMachineNetworkReady
+            status: 'True'
+          - type: VirtualMachineTools
+            status: 'True'
           - type: GuestCustomization
             status: 'True'
       manifest:
@@ -214,6 +218,12 @@ outputs:
       | DNS Domain | ${variable.domainName} |
       | DNS Zone | ${variable.dnsZone} |
       | Name Server | ${variable.dnsServer01} |
+
+      #### SSH Connection
+
+      ```console
+      $ ssh ${input.adminUsername}@${variable.isPrivateSubnet ? variable.sshServiceName:resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4:'pending-ip-assignment'}
+      ```
 postDeploymentPayload:
   value:
     vmName: ${variable.hostname}
