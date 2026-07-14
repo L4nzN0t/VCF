@@ -1,6 +1,6 @@
 formatVersion: 2
 name: SFTP Server
-version: 4
+version: 5
 inputs:
   vmName:
     type: string
@@ -286,14 +286,14 @@ outputs:
       | Field | Value |
       | --- | --- |
       | SFTP User | ${input.sftpUsername} |
-      | SFTP Endpoint | ${resource.SftpVM.object.status.network.primaryIP4}:22 |
+      | SFTP Endpoint | ${resource.sftpService.object.status.loadBalancer.ingress[0].ip}:22 |
       | Upload Path | /upload |
 
 
       #### SSH Connection
 
       ```console
-      $ ssh ${input.adminUsername}@${resource.SftpVM.object.status.network.primaryIP4}
+      $ ssh ${input.adminUsername}@${resource.sftpService.object.status.loadBalancer.ingress[0].ip}
       ```
 
       #### Lifecycle Tasks
