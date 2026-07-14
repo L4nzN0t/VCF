@@ -1,6 +1,6 @@
 formatVersion: 2
 name: Linux Server
-version: 1
+version: 3
 inputs:
   vmName:
     type: string
@@ -220,7 +220,7 @@ outputs:
       #### SSH Connection
 
       ```console
-      $ ssh ${input.adminUsername}@${variable.isPrivateSubnet ? variable.sshServiceName:resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4:'pending-ip-assignment'}
+      $ ssh ${input.adminUsername}@${variable.fqdn}
       ```
 postDeploymentPayload:
   value:

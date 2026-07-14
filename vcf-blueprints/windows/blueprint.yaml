@@ -1,6 +1,6 @@
 formatVersion: 2
 name: Windows Server
-version: 4
+version: 5
 inputs:
   vmName:
     type: string
