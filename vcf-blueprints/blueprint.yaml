@@ -1,5 +1,5 @@
 formatVersion: 2
-name: vcf-902-sftp-server
+name: SFTP Server
 version: 1
 inputs:
   vmName:
