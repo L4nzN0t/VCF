@@ -1,6 +1,6 @@
 formatVersion: 2
 name: Windows Server
-version: 10
+version: 11
 inputs:
   vmName:
     type: string
@@ -12,7 +12,7 @@ inputs:
   location:
     type: string
     title: vCenter Environment
-    description: vCenter or workload-domain location used for placement and inventory metadata.
+    description: vCenter or workload-domain location recorded as inventory metadata.
     minLength: 1
   namespaceName:
     type: string
@@ -26,8 +26,8 @@ inputs:
     $data: /data/storageclasses?namespace={{namespaceName}}
   vmClass:
     type: string
-    title: T-Shirt VM Class
-    description: VM class used when Virtual Machine Size Type is T-Shirt Size.
+    title: Virtual Machine Size
+    description: Select an allowed VM class for the target namespace.
     $data: /data/virtualmachineclasses?namespace={{namespaceName}}
   subnetName:
     type: string
@@ -57,10 +57,11 @@ inputs:
   additionalDisks:
     type: array
     title: Additional Disks
-    description: Up to three data disks. Drive letters must be unique and unused in the Windows image.
+    description: Up to three data disks. Select a unique, unused drive letter for each disk.
     default: []
     minItems: 0
     maxItems: 3
+    uniqueItems: true
     items:
       type: object
       required:
@@ -159,6 +160,8 @@ variables:
   rdpService: ${variable.hostname}-service-rdp
   isDomainJoin: ${input.domainName != 'workgroup'}
   isPrivateSubnet: ${input.subnetName == 'subnet-vm-app-private'}
+  fqdn: ${variable.isDomainJoin ? variable.hostname + '.' + input.domainName:variable.hostname}
+  windowsImageLabel: ${input.windowsImage == 'vmi-b65217a5051ad6ded' ? 'Windows Server 2025':input.windowsImage == 'vmi-b65217a5051ad6drd' ? 'Windows Server 2022':input.windowsImage == 'vmi-b65217a5051ad6dtd' ? 'Windows Server 2019':input.windowsImage == 'vmi-b65217a5051ad6dyd' ? 'SQL Server 2022':input.windowsImage == 'vmi-b65217a5051ad6did' ? 'SQL Server 2019':'Unknown Windows image'}
   bootstrapSecretName: vm-${variable.hostname}-bootstrap
   domainJoinSecretName: vm-${variable.hostname}-domain-join
   commonLabels:
@@ -167,6 +170,7 @@ variables:
     vcf.vm/vmName: ${variable.hostname}
     vcf.vm/application: ${input.application}
     vcf.vm/environment: ${input.environment}
+    vcf.vm/owner: ${split(env.requestedBy, '@')[0]}
   commonAnnotations:
     vcf.vm/requestedBy: ${env.requestedBy}
     vcf.vm/location: ${input.location}
@@ -315,6 +319,10 @@ resources:
         conditions:
           - type: VirtualMachineCreated
             status: 'True'
+          - type: VirtualMachineNetworkReady
+            status: 'True'
+          - type: VirtualMachineTools
+            status: 'True'
           - type: GuestCustomization
             status: 'True'
       manifest:
@@ -360,9 +368,13 @@ resources:
                 identification: '${variable.isDomainJoin ? {''joinDomain'': input.domainName, ''domainAdmin'': variable.svcAccount, ''domainAdminPassword'': {''name'': variable.domainJoinSecretName, ''key'': ''password''}} : {''joinWorkgroup'': ''WORKGROUP''}}'
 outputs:
   hostname:
-    value: ${variable.isDomainJoin ? variable.hostname + '.' + input.domainName:variable.hostname}
+    value: ${variable.hostname}
+  fqdn:
+    value: ${variable.fqdn}
+  windowsImageLabel:
+    value: ${variable.windowsImageLabel}
   ipAddress:
-    value: ${resource.WindowsVM.object.status.network.primaryIP4}
+    value: ${resource.WindowsVM.object.status.network.primaryIP4 != null ? resource.WindowsVM.object.status.network.primaryIP4:'Pending IP assignment'}
   namespace:
     value: ${variable.namespace}
   vmClass:
@@ -382,8 +394,8 @@ outputs:
       | Field | Value |
       | --- | --- |
       | VM Name | ${variable.hostname} |
-      | Operating System | ${variable.linuxVersion} |
-      | Image | ${input.linuxImage} |
+      | Operating System / Edition | ${variable.windowsImageLabel} |
+      | Image | ${input.windowsImage} |
       | Requested By | ${env.requestedBy} |
       | Namespace | ${variable.namespace} |
       | VM Class | ${input.vmClass} |
@@ -394,12 +406,62 @@ outputs:
 
       | Field | Value |
       | --- | --- |
-      | FQDN | ${variable.hostname} |
+      | FQDN | ${variable.fqdn} |
       | Domain / Workgroup | ${input.domainName} |
       | Domain Join | ${variable.isDomainJoin ? 'Requested':'Not requested'} |
-      | IP Address | ${resource.WindowsVM.object.status.network.primaryIP4} |
       | Subnet | ${input.subnetName} |
       | Access Type | ${variable.isPrivateSubnet ? 'Private subnet through load balancer':'Direct public subnet access'} |
       | Name Servers | ${variable.dnsServer01} |
       | VM Primary IP | ${resource.WindowsVM.object.status.network.primaryIP4 != null ? resource.WindowsVM.object.status.network.primaryIP4:'Pending IP assignment'} |
-      | Load Balancer Service | ${variable.isPrivateSubnet ? variable.rdpServiceName:'Not required'} |
+      | Load Balancer Service | ${variable.isPrivateSubnet ? variable.rdpService:'Not required'} |
+
+      #### RDP Connection
+
+      ```console
+      mstsc /v:${variable.isPrivateSubnet ? variable.rdpService:resource.WindowsVM.object.status.network.primaryIP4 != null ? resource.WindowsVM.object.status.network.primaryIP4:'pending-ip-assignment'}
+      ```
+postDeploymentPayload:
+  value:
+    vmName: ${variable.hostname}
+    fqdn: ${variable.fqdn}
+    namespace: ${variable.namespace}
+    osType: windows
+    windowsImageLabel: ${variable.windowsImageLabel}
+    windowsImage: ${input.windowsImage}
+    workloadType: windows-vm
+    requestedBy: ${env.requestedBy}
+    location: ${input.location}
+    domainName: ${input.domainName}
+    domainJoinRequested: ${variable.isDomainJoin}
+    application: ${input.application}
+    environment: ${input.environment}
+    lineOfBusiness: ${input.lineOfBusiness}
+    businessTower: ${input.businessTower}
+    apmno: ${input.apmno}
+    technicalOwner: ${input.technicalOwner}
+    businessOwner: ${input.businessOwner}
+    vmClass: ${input.vmClass}
+    storageClass: ${input.storageClass}
+    additionalDisksRequested: ${length(input.additionalDisks) > 0}
+    additionalDisks: ${input.additionalDisks}
+    subnetName: ${input.subnetName}
+    networkAccess: ${variable.isPrivateSubnet ? 'private-load-balancer':'public-direct'}
+    rdpServiceName: ${variable.isPrivateSubnet ? variable.rdpService:'not-required'}
+    ipAddress: ${resource.WindowsVM.object.status.network.primaryIP4 != null ? resource.WindowsVM.object.status.network.primaryIP4:'Pending IP assignment'}
+    dnsRecord:
+      action: ${variable.isDomainJoin ? 'create':'skip'}
+      type: A
+      name: ${variable.hostname}
+      zone: ${variable.isDomainJoin ? input.domainName:''}
+      fqdn: ${variable.fqdn}
+      address: ${resource.WindowsVM.object.status.network.primaryIP4 != null ? resource.WindowsVM.object.status.network.primaryIP4:'pending'}
+    labelPatch:
+      vcf.vm/ipAddress: ${resource.WindowsVM.object.status.network.primaryIP4 != null ? resource.WindowsVM.object.status.network.primaryIP4:'pending'}
+      vcf.vm/fqdn: ${variable.fqdn}
+    vCenterTags:
+      app.kubernetes.io/name: vm-lifecycle
+      app.kubernetes.io/instance: ${variable.hostname}
+      vcf.vm/vmName: ${variable.hostname}
+      vcf.vm/application: ${input.application}
+      vcf.vm/environment: ${input.environment}
+      vcf.vm/owner: ${split(env.requestedBy, '@')[0]}
