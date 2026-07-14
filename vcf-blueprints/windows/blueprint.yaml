@@ -156,6 +156,7 @@ variables:
   storageClass: ${input.storageClass}
   dnsServer01: ${propgroup.dnsServers.dnsServer01}
   svcAccount: sa-svc-vcfa
+  rdp.service: ${variable.hostname}-service-rdp
   isDomainJoin: ${input.domainName != 'workgroup'}
   isPrivateSubnet: ${input.subnetName == 'subnet-vm-app-private'}
   bootstrapSecretName: vm-${variable.hostname}-bootstrap
@@ -288,7 +289,7 @@ resources:
         apiVersion: vmoperator.vmware.com/v1alpha3
         kind: VirtualMachineService
         metadata:
-          name: ${variable.hostname}-service-rdp
+          name: ${variable.rdpService}
           namespace: ${variable.namespace}
           labels: ${variable.commonLabels}
         spec:
