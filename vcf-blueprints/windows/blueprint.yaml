@@ -1,6 +1,6 @@
 formatVersion: 2
 name: Windows Server
-version: 7
+version: 8
 inputs:
   vmName:
     type: string
@@ -288,7 +288,7 @@ resources:
         apiVersion: vmoperator.vmware.com/v1alpha3
         kind: VirtualMachineService
         metadata:
-          name: ${variable.rdpService}
+          name: ${variable.hostname}-service-rdp
           namespace: ${variable.namespace}
           labels: ${variable.commonLabels}
         spec:
