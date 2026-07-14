@@ -52,10 +52,10 @@ inputs:
     pattern: ^[a-z_][a-z0-9_-]*$
 variables:
   hostname: ${to_lower(input.vmName)}
-  domainName: ${propgroup.domainName.domainController}
   namespace: ${input.namespaceName}
   storageClass: ${input.storageClass}
-  fqdn: ${variable.hostname}.${variable.domainName}
+  linuxVersion: ${input.linuxImage == 'vmi-4dcd43492500fbe61' ? 'Ubuntu Server 22.04':input.linuxImage == 'ubuntu-2404' ? 'Ubuntu Server 24.04':'Unknown Linux version'}
+  fqdn: ${variable.hostname}.${propgroup.domainName.dnsZone}
   dnsZone: ${propgroup.domainName.dnsZone}
   dnsServer01: ${propgroup.dnsServers.dnsServer01}
   isPrivateSubnet: ${input.subnetName == 'subnet-vm-app-private'}
@@ -67,7 +67,6 @@ variables:
     vcf.vm/owner: ${split(env.requestedBy, '@')[0]}
   commonAnnotations:
     vcf.vm/requestedBy: ${env.requestedBy}
-    vcf.vm/domainName: ${variable.domainName}
     vcf.vm/dnsZone: ${variable.dnsZone}
     vcf.vm/subnetName: ${input.subnetName}
 resources:
@@ -147,11 +146,11 @@ resources:
                   name: ${input.subnetName}
                   kind: Subnet
             hostName: ${variable.hostname}
-            domainName: ${variable.domainName}
+            domainName: ${variable.dnsZone}
             nameservers:
               - ${variable.dnsServer01}
             searchDomains:
-              - ${variable.domainName}
+              - ${variable.dnsZone}
           bootstrap:
             cloudInit:
               cloudConfig:
@@ -178,6 +177,8 @@ outputs:
     value: ${variable.namespace}
   subnetName:
     value: ${input.subnetName}
+  linuxVersion:
+    value: ${variable.linuxVersion}
   networkAccess:
     value: ${variable.isPrivateSubnet ? 'private-load-balancer':'public-direct'}
   ipAddress:
@@ -197,7 +198,7 @@ outputs:
       | Field | Value |
       | --- | --- |
       | VM Name | ${variable.hostname} |
-      | Operating System | Linux |
+      | Operating System | ${variable.linuxVersion} |
       | Image | ${input.linuxImage} |
       | Requested By | ${env.requestedBy} |
       | Namespace | ${variable.namespace} |
@@ -227,9 +228,9 @@ postDeploymentPayload:
     fqdn: ${variable.fqdn}
     namespace: ${variable.namespace}
     osType: linux
+    linuxVersion: ${variable.linuxVersion}
     workloadType: ubuntu-vm
     requestedBy: ${env.requestedBy}
-    domainName: ${variable.domainName}
     dnsZone: ${variable.dnsZone}
     vmClass: ${input.vmClass}
     storageClass: ${input.storageClass}
