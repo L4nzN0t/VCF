@@ -1,6 +1,6 @@
 formatVersion: 2
 name: Windows Server
-version: 6
+version: 7
 inputs:
   vmName:
     type: string
@@ -157,6 +157,7 @@ variables:
   dnsServer01: ${propgroup.dnsServers.dnsServer01}
   svcAccount: sa-svc-vcfa
   isDomainJoin: ${input.domainName != 'workgroup'}
+  isPrivateSubnet: ${input.subnetName == 'subnet-vm-app-private'}
   bootstrapSecretName: vm-${variable.hostname}-bootstrap
   domainJoinSecretName: vm-${variable.hostname}-domain-join
   commonLabels:
