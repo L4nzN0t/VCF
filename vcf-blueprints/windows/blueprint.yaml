@@ -1,6 +1,6 @@
 formatVersion: 2
 name: Windows Server
-version: 11
+version: 12
 inputs:
   vmName:
     type: string
@@ -119,37 +119,6 @@ inputs:
         const: SC
       - title: Web Server
         const: WB
-  lineOfBusiness:
-    type: string
-    title: Line of Business
-    minLength: 1
-  environment:
-    type: string
-    title: Environment
-    default: test
-    oneOf:
-      - title: Production
-        const: prod
-      - title: Pre-Production
-        const: pre-prod
-      - title: Test
-        const: test
-  businessTower:
-    type: string
-    title: Business Tower
-    minLength: 1
-  apmno:
-    type: string
-    title: APM Number
-    minLength: 1
-  technicalOwner:
-    type: string
-    title: Technical Owner
-    minLength: 1
-  businessOwner:
-    type: string
-    title: Business Owner
-    minLength: 1
 variables:
   orgName: ${propgroup.org.orgName}
   hostname: ${to_lower(input.vmName)}
@@ -169,17 +138,11 @@ variables:
     app.kubernetes.io/instance: ${variable.hostname}
     vcf.vm/vmName: ${variable.hostname}
     vcf.vm/application: ${input.application}
-    vcf.vm/environment: ${input.environment}
     vcf.vm/owner: ${split(env.requestedBy, '@')[0]}
   commonAnnotations:
     vcf.vm/requestedBy: ${env.requestedBy}
     vcf.vm/location: ${input.location}
     vcf.vm/domainName: ${input.domainName}
-    vcf.vm/lineOfBusiness: ${input.lineOfBusiness}
-    vcf.vm/businessTower: ${input.businessTower}
-    vcf.vm/apmno: ${input.apmno}
-    vcf.vm/technicalOwner: ${input.technicalOwner}
-    vcf.vm/businessOwner: ${input.businessOwner}
 resources:
   SupervisorNamespace:
     type: CCI.Supervisor.Namespace
@@ -434,12 +397,6 @@ postDeploymentPayload:
     domainName: ${input.domainName}
     domainJoinRequested: ${variable.isDomainJoin}
     application: ${input.application}
-    environment: ${input.environment}
-    lineOfBusiness: ${input.lineOfBusiness}
-    businessTower: ${input.businessTower}
-    apmno: ${input.apmno}
-    technicalOwner: ${input.technicalOwner}
-    businessOwner: ${input.businessOwner}
     vmClass: ${input.vmClass}
     storageClass: ${input.storageClass}
     additionalDisksRequested: ${length(input.additionalDisks) > 0}
@@ -463,5 +420,4 @@ postDeploymentPayload:
       app.kubernetes.io/instance: ${variable.hostname}
       vcf.vm/vmName: ${variable.hostname}
       vcf.vm/application: ${input.application}
-      vcf.vm/environment: ${input.environment}
       vcf.vm/owner: ${split(env.requestedBy, '@')[0]}
