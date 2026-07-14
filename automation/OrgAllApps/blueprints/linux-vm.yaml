@@ -28,9 +28,13 @@ inputs:
     title: Virtual Machine Subnet
     description: Existing Supervisor Subnet resource used by the VM network interface.
     default: subnet-vm-app-private
-    enum:
-      - subnet-vm-app-public
-      - subnet-vm-app-private
+    oneOf:
+      - title: Public
+        const: subnet-vm-app-public
+      - title: Private
+        const: subnet-vm-app-private
+      - title: Private
+        const: subnet-vm-app-private
   linuxImage:
     type: string
     title: Linux Image
@@ -41,13 +45,6 @@ inputs:
         const: vmi-4dcd43492500fbe61
       - title: Ubuntu Server 24.04
         const: ubuntu-2404
-  # PvcSize:
-  #   type: integer
-  #   title: SFTP Volume Size (GB)
-  #   description: Size of the persistent volume for SFTP storage.
-  #   default: 10
-  #   minimum: 1
-  #   maximum: 100
   adminUsername:
     type: string
     title: Admin SSH User
@@ -55,21 +52,6 @@ inputs:
     minLength: 2
     maxLength: 32
     pattern: ^[a-z_][a-z0-9_-]*$
-  # sftpUsername:
-  #   type: string
-  #   title: SFTP User
-  #   default: sftpuser
-  #   minLength: 2
-  #   maxLength: 32
-  #   pattern: ^[a-z_][a-z0-9_-]*$
-  # sftpPassword:
-  #   type: string
-  #   encrypted: true
-  #   title: SFTP Password
-  # allowPasswordlessSudo:
-  #   type: boolean
-  #   title: Allow Admin Passwordless Sudo
-  #   default: true
 variables:
   hostname: ${to_lower(input.vmName)}
   domainName: ${propgroup.domainName.domainController}
@@ -185,41 +167,6 @@ resources:
                     passwd:
                       name: vm-${variable.hostname}-bootstrap
                       key: adminPassword
-                # write_files:
-                #   - path: /etc/ssh/sshd_config.d/sftp_config.conf
-                #     owner: root:root
-                #     permissions: '0644'
-                #     content: |
-                #       Match Group sftpusers
-                #         ChrootDirectory /sftp
-                #         PasswordAuthentication yes
-                #         PermitTunnel no
-                #         AllowAgentForwarding no
-                #         X11Forwarding no
-                #         AllowTcpForwarding yes
-                #         ForceCommand internal-sftp
-                # runcmd:
-                #   - |
-                #     set -eu
-                #     disk="$(lsblk -dnpo NAME,TYPE,MOUNTPOINT | awk '$2=="disk" && $3=="" {print $1}' | tail -n 1)"
-                #     if [ -n "$disk" ]; then
-                #       if ! blkid "$disk"; then
-                #         mkfs.ext4 -F "$disk"
-                #       fi
-                #       mkdir -p /sftp
-                #       uuid="$(blkid -s UUID -o value "$disk")"
-                #       if ! grep -q "$uuid" /etc/fstab; then
-                #         echo "UUID=$uuid /sftp ext4 defaults,nofail 0 2" >> /etc/fstab
-                #       fi
-                #       mount /sftp
-                #     fi
-                #   - mkdir -p /sftp/upload
-                #   - chown root:root /sftp
-                #   - chmod 755 /sftp /sftp/upload
-                #   - chown ${input.sftpUsername}:sftpusers /sftp/upload
-                #   - chmod 750 /sftp/upload
-                #   - systemctl enable ssh || systemctl enable sshd || true
-                #   - systemctl restart ssh || systemctl restart sshd || true
 outputs:
   hostname:
     value: ${variable.hostname}
@@ -232,11 +179,11 @@ outputs:
   networkAccess:
     value: ${variable.isPrivateSubnet ? 'private-load-balancer':'public-direct'}
   ipAddress:
-    value: ${variable.isPrivateSubnet ? resource.SshService[0].object.status.loadBalancer.ingress[0].ip:resource.UbuntuVM.object.status.network.primaryIP4}
+    value: ${resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4:'Pending IP assignment'}
   sshServiceName:
     value: ${variable.isPrivateSubnet ? variable.sshServiceName:'not-required'}
   sshEndpoint:
-    value: ${variable.isPrivateSubnet ? resource.SshService[0].object.status.loadBalancer.ingress[0].ip + ':22':resource.UbuntuVM.object.status.network.primaryIP4 + ':22'}
+    value: ${variable.isPrivateSubnet ? variable.sshServiceName + ':22':resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4 + ':22':'Pending IP assignment'}
   __deploymentOverview:
     value: |-
       ## Ubuntu VM Deployment
@@ -262,10 +209,8 @@ outputs:
       | --- | --- |
       | Subnet | ${input.subnetName} |
       | Access Type | ${variable.isPrivateSubnet ? 'Private subnet through load balancer':'Direct public subnet access'} |
-      | IP Address | ${variable.isPrivateSubnet ? resource.SshService[0].object.status.loadBalancer.ingress[0].ip:resource.UbuntuVM.object.status.network.primaryIP4} |
-      | SSH Endpoint | ${variable.isPrivateSubnet ? resource.SshService[0].object.status.loadBalancer.ingress[0].ip + ':22':resource.UbuntuVM.object.status.network.primaryIP4 + ':22'} |
+      | VM Primary IP | ${resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4:'Pending IP assignment'} |
       | Load Balancer Service | ${variable.isPrivateSubnet ? variable.sshServiceName:'Not required'} |
-      | Admin SSH User | ${input.adminUsername} |
       | DNS Domain | ${variable.domainName} |
       | DNS Zone | ${variable.dnsZone} |
       | Name Server | ${variable.dnsServer01} |
@@ -285,16 +230,16 @@ postDeploymentPayload:
     subnetName: ${input.subnetName}
     networkAccess: ${variable.isPrivateSubnet ? 'private-load-balancer':'public-direct'}
     sshServiceName: ${variable.isPrivateSubnet ? variable.sshServiceName:'not-required'}
-    ipAddress: ${variable.isPrivateSubnet ? resource.SshService[0].object.status.loadBalancer.ingress[0].ip:resource.UbuntuVM.object.status.network.primaryIP4}
+    ipAddress: ${resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4:'Pending IP assignment'}
     dnsRecord:
-      action: create
+      action: ${variable.isPrivateSubnet ? 'defer-until-load-balancer-ip':'create'}
       type: A
       name: ${variable.hostname}
       zone: ${variable.dnsZone}
       fqdn: ${variable.fqdn}
-      address: ${variable.isPrivateSubnet ? resource.SshService[0].object.status.loadBalancer.ingress[0].ip:resource.UbuntuVM.object.status.network.primaryIP4}
+      address: ${variable.isPrivateSubnet ? 'pending':resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4:'pending'}
     labelPatch:
-      vcf.vm/ipAddress: ${variable.isPrivateSubnet ? resource.SshService[0].object.status.loadBalancer.ingress[0].ip:resource.UbuntuVM.object.status.network.primaryIP4}
+      vcf.vm/ipAddress: ${resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4:'pending'}
       vcf.vm/fqdn: ${variable.fqdn}
     vCenterTags:
       app.kubernetes.io/name: ubuntu-vm
