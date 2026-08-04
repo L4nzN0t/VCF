@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
-import math
 import platform
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
@@ -14,42 +13,70 @@ from concurrent.futures import ThreadPoolExecutor
 RED = "\033[31m"
 GREEN = "\033[32m"
 RESET = "\033[0m"
+PING_COUNT = 2
+PING_TIMEOUT_SECONDS = 2
+MAX_WORKERS = 64
 
 
-def ping(ip_address: str, timeout: float = 1.0) -> bool:
-    """Return True when *ip_address* replies to one ICMP echo request."""
+def ping(ip_address: str) -> bool:
+    """Return True when *ip_address* replies to an ICMP echo request."""
     system = platform.system().lower()
 
     if system == "windows":
-        command = ["ping", "-n", "1", "-w", str(math.ceil(timeout * 1000)), ip_address]
+        command = [
+            "ping",
+            "-4",
+            "-n",
+            str(PING_COUNT),
+            "-w",
+            str(PING_TIMEOUT_SECONDS * 1000),
+            ip_address,
+        ]
     elif system == "darwin":
-        command = ["ping", "-c", "1", "-W", str(math.ceil(timeout * 1000)), ip_address]
+        command = [
+            "ping",
+            "-c",
+            str(PING_COUNT),
+            "-W",
+            str(PING_TIMEOUT_SECONDS * 1000),
+            ip_address,
+        ]
     else:
-        command = ["ping", "-c", "1", "-W", str(math.ceil(timeout)), ip_address]
+        command = [
+            "ping",
+            "-4",
+            "-c",
+            str(PING_COUNT),
+            "-W",
+            str(PING_TIMEOUT_SECONDS),
+            ip_address,
+        ]
 
     try:
         result = subprocess.run(
             command,
-            stdout=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             check=False,
-            timeout=timeout + 1,
+            timeout=(PING_TIMEOUT_SECONDS * PING_COUNT) + 1,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
 
-    return result.returncode == 0
+    # Windows may return exit code 0 for ICMP errors such as "Destination host
+    # unreachable". A genuine echo reply includes the packet's TTL.
+    return result.returncode == 0 and b"ttl=" in result.stdout.lower()
 
 
-def scan_cidr(
-    cidr: str, timeout: float = 1.0, workers: int = 64
-) -> dict[str, list[str]]:
+def scan_cidr(cidr: str) -> dict[str, list[str]]:
     """Return reachable and unreachable usable addresses in *cidr*."""
     network = ipaddress.ip_network(cidr, strict=False)
+    if network.version != 4:
+        raise ValueError("only IPv4 CIDR ranges are supported")
     addresses = [str(address) for address in network.hosts()]
 
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        replies = executor.map(lambda address: ping(address, timeout), addresses)
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        replies = executor.map(ping, addresses)
 
     result: dict[str, list[str]] = {"reachable": [], "unreachable": []}
     for address, replied in zip(addresses, replies):
@@ -61,33 +88,17 @@ def scan_cidr(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Ping the usable IP addresses in an IPv4 or IPv6 CIDR range."
+        description="Ping the usable IP addresses in an IPv4 CIDR range."
     )
     parser.add_argument("cidr", help="CIDR to scan, for example 192.168.1.0/24")
-    parser.add_argument(
-        "--timeout",
-        type=float,
-        default=1.0,
-        help="timeout for each ping in seconds (default: 1)",
-    )
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=64,
-        help="maximum number of concurrent pings (default: 64)",
-    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    if args.timeout <= 0:
-        raise SystemExit("--timeout must be greater than zero")
-    if args.workers <= 0:
-        raise SystemExit("--workers must be greater than zero")
 
     try:
-        result = scan_cidr(args.cidr, args.timeout, args.workers)
+        result = scan_cidr(args.cidr)
     except ValueError as error:
         raise SystemExit(f"Invalid CIDR: {error}") from error
 
