@@ -91,10 +91,15 @@ def main() -> int:
     except ValueError as error:
         raise SystemExit(f"Invalid CIDR: {error}") from error
 
-    for address in result["reachable"]:
-        print(f"{address} - {RED}Busy{RESET}")
-    for address in result["unreachable"]:
-        print(f"{address} - {GREEN}Available{RESET}")
+    reachable = set(result["reachable"])
+    addresses = sorted(
+        result["reachable"] + result["unreachable"], key=ipaddress.ip_address
+    )
+    for address in addresses:
+        if address in reachable:
+            print(f"{address} - {RED}Busy{RESET}")
+        else:
+            print(f"{address} - {GREEN}Available{RESET}")
     return 0
 
 
