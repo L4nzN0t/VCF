@@ -5,11 +5,15 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
-import json
 import math
 import platform
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
+
+
+RED = "\033[31m"
+GREEN = "\033[32m"
+RESET = "\033[0m"
 
 
 def ping(ip_address: str, timeout: float = 1.0) -> bool:
@@ -87,7 +91,10 @@ def main() -> int:
     except ValueError as error:
         raise SystemExit(f"Invalid CIDR: {error}") from error
 
-    print(json.dumps(result, indent=2))
+    for address in result["reachable"]:
+        print(f"{address} - {RED}Busy{RESET}")
+    for address in result["unreachable"]:
+        print(f"{address} - {GREEN}Available{RESET}")
     return 0
 
 
