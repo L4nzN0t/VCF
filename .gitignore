@@ -5,10 +5,11 @@ customers/
 private/
 temp/
 jira/
-
-reads.md
-
+scripts/_pycache_/
 
 # Ignore all files ending with a specific extension
 *.log
 *.tmp
+
+# Ignore specific files
+reads.md

@@ -1,6 +1,6 @@
 formatVersion: 2
 name: Linux Server
-version: 5
+version: 1
 inputs:
   vmName:
     type: string
