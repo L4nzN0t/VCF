@@ -1,3 +1,27 @@
+# It is necessary to create some components in order to use the blueprint
+#  Property Group Name | Property
+#  --------------------|-----------------
+#   domainName         | dnsZone
+#   dnsServers         | dnsServer01
+#
+#  Secrets
+#  ----------------------
+#  linux-admin-password
+#
+#  VM Image
+#  ----------------------
+#  vmi-xxxxxxxxxxxxxxx - Ubuntu Server 22.04
+#
+#
+#  Subnet Name            | Access Mode
+#  -----------------------|-----------------
+#  subnet-vm-app-public   | Public
+#  subnet-vm-app-private  | Private
+#
+#
+#
+#
+#
 formatVersion: 2
 name: Linux Server
 version: 1
@@ -5,7 +29,7 @@ inputs:
   vmName:
     type: string
     title: Server Name
-    description: Lowercase DNS-safe name for the SFTP endpoint.
+    description: Lowercase DNS-safe name for the endpoint.
     minLength: 3
     maxLength: 15
     pattern: ^[a-z][a-z0-9-]{1,13}[a-z0-9]$
@@ -37,10 +61,10 @@ inputs:
     type: string
     title: Linux Image
     description: Supervisor VM image name for the Linux guest.
-    default: vmi-4dcd43492500fbe61
+    default: vmi-ef05b52bea20be301
     oneOf:
       - title: Ubuntu Server 22.04
-        const: vmi-4dcd43492500fbe61
+        const: vmi-ef05b52bea20be301
       - title: Ubuntu Server 24.04
         const: ubuntu-2404
   adminUsername:
@@ -54,7 +78,7 @@ variables:
   hostname: ${to_lower(input.vmName)}
   namespace: ${input.namespaceName}
   storageClass: ${input.storageClass}
-  linuxVersion: ${input.linuxImage == 'vmi-4dcd43492500fbe61' ? 'Ubuntu Server 22.04':input.linuxImage == 'ubuntu-2404' ? 'Ubuntu Server 24.04':'Unknown Linux version'}
+  linuxVersion: ${input.linuxImage == 'vmi-ef05b52bea20be301' ? 'Ubuntu Server 24.04':input.linuxImage == 'ubuntu-2204' ? 'Ubuntu Server 22.04':'Unknown Linux version'}
   fqdn: ${variable.hostname}.${propgroup.domainName.dnsZone}
   dnsZone: ${propgroup.domainName.dnsZone}
   dnsServer01: ${propgroup.dnsServers.dnsServer01}
@@ -169,6 +193,8 @@ resources:
                       name: vm-${variable.hostname}-bootstrap
                       key: adminPassword
 outputs:
+  runPostDeployment:
+    value: 'true'
   hostname:
     value: ${variable.hostname}
   fqdn:
@@ -179,14 +205,13 @@ outputs:
     value: ${input.subnetName}
   linuxVersion:
     value: ${variable.linuxVersion}
-  networkAccess:
-    value: ${variable.isPrivateSubnet ? 'private-load-balancer':'public-direct'}
+  network:
+    value: ${input.subnetName == 'subnet-vm-app-public' ? 'public':'private'}
   ipAddress:
-    value: ${resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4:'Pending IP assignment'}
+    value: ${resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4:''}
   sshServiceName:
     value: ${variable.isPrivateSubnet ? variable.sshServiceName:'not-required'}
-  sshEndpoint:
-    value: ${variable.isPrivateSubnet ? variable.sshServiceName + ':22':resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4 + ':22':'Pending IP assignment'}
+
   __deploymentOverview:
     value: |-
       ## Ubuntu VM Deployment
@@ -210,8 +235,8 @@ outputs:
       | Field | Value |
       | --- | --- |
       | FQDN | ${variable.fqdn} |
-      | Subnet | ${input.subnetName} |
-      | Access Type | ${variable.isPrivateSubnet ? 'Private subnet through load balancer':'Direct public subnet access'} |
+      | Subnet | ${input.subnetName}  |
+      | Access Type | ${input.subnetName == 'subnet-vm-app-public' ? 'Public':'Private'}|
       | DNS Zone | ${variable.dnsZone} |
       | Name Servers | ${variable.dnsServer01} |
       | VM Primary IP | ${resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4:'Pending IP assignment'} |
@@ -220,7 +245,7 @@ outputs:
       #### SSH Connection
 
       ```console
-      $ ssh ${input.adminUsername}@${variable.fqdn}
+      ssh ${input.adminUsername}@${variable.fqdn}
       ```
 postDeploymentPayload:
   value:

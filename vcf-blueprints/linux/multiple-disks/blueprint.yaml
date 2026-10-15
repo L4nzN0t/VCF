@@ -1,0 +1,488 @@
+# It is necessary to create some components in order to use the blueprint
+#  Property Group Name | Property
+#  --------------------|-----------------
+#   domainName         | dnsZone
+#   dnsServers         | dnsServer01
+#
+#  Secrets
+#  ----------------------
+#  linux-admin-password
+#
+#  VM Image
+#  ----------------------
+#  vmi-xxxxxxxxxxxxxxx - Ubuntu Server 22.04
+#
+#
+#  Subnet Name            | Access Mode
+#  -----------------------|-----------------
+#  subnet-vm-app-public   | Public
+#  subnet-vm-app-private  | Private
+#
+#
+#
+#
+# Additional disks: new PVCs, whole-disk ext4, root-owned mount directories.
+# Automatic devices assume one OS disk at /dev/sda and added SCSI disks at
+# /dev/sdb, /dev/sdc, /dev/sdd in input order. Verify this image/class mapping;
+# disk size alone does not establish disk identity.
+# Mount configuration runs during cloud-init; check cloud-init status --wait
+# in the guest because VM readiness conditions do not verify data mounts.
+# PVC attachment reference:
+# https://vm-operator.readthedocs.io/en/docs-stable/concepts/workloads/vm/
+formatVersion: 2
+name: Linux Server
+version: 1
+inputs:
+  vmName:
+    type: string
+    title: Server Name
+    description: Lowercase DNS-safe name for the endpoint.
+    minLength: 3
+    maxLength: 15
+    pattern: ^[a-z][a-z0-9-]{1,13}[a-z0-9]$
+  namespaceName:
+    type: string
+    title: Namespace
+    description: Existing Supervisor namespace used as the deployment target.
+    $data: /data/namespaces?projectId={{project}}
+  storageClass:
+    type: string
+    title: Storage Class
+    $data: /data/storageclasses?namespace={{namespaceName}}
+  vmClass:
+    type: string
+    title: Virtual Machine Size
+    description: Select an allowed VM class for the target namespace.
+    $data: /data/virtualmachineclasses?namespace={{namespaceName}}
+  subnetName:
+    type: string
+    title: Virtual Machine Subnet
+    description: Existing Supervisor Subnet resource used by the VM network interface.
+    default: subnet-vm-app-private
+    oneOf:
+      - title: Public
+        const: subnet-vm-app-public
+      - title: Private
+        const: subnet-vm-app-private
+  linuxImage:
+    type: string
+    title: Linux Image
+    description: Supervisor VM image name for the Linux guest.
+    default: vmi-ef05b52bea20be301
+    oneOf:
+      - title: Ubuntu Server 22.04
+        const: vmi-ef05b52bea20be301
+      - title: Ubuntu Server 24.04
+        const: ubuntu-2404
+  additionalDisks:
+    type: array
+    title: Additional Disks
+    description: Up to three new ext4 data disks. Choose each mount path and size. Devices are assigned automatically as /dev/sdb, /dev/sdc, and /dev/sdd in input order.
+    default: []
+    minItems: 0
+    maxItems: 3
+    uniqueItems: true
+    items:
+      type: object
+      required:
+        - mountPath
+        - sizeGb
+      properties:
+        mountPath:
+          type: string
+          title: Mount Path
+          description: Desired absolute Linux mount path, such as /apps/database/data. Existing directories must be empty.
+        sizeGb:
+          type: integer
+          title: Size (GiB)
+          minimum: 1
+          maximum: 4096
+  adminUsername:
+    type: string
+    title: Admin SSH User
+    default: cloudadmin
+    minLength: 2
+    maxLength: 32
+    pattern: ^[a-z_][a-z0-9_-]*$
+variables:
+  # Resolve devices once for PVC metadata, bootstrap, and deployment outputs.
+  dataDisks: >-
+    ${(length(input.additionalDisks) > 0 ? [{'deviceName': '/dev/sdb', 'sizeGb': input.additionalDisks[0].sizeGb, 'mountPath': input.additionalDisks[0].mountPath}] : []) + (length(input.additionalDisks) > 1 ? [{'deviceName': '/dev/sdc', 'sizeGb': input.additionalDisks[1].sizeGb, 'mountPath': input.additionalDisks[1].mountPath}] : []) + (length(input.additionalDisks) > 2 ? [{'deviceName': '/dev/sdd', 'sizeGb': input.additionalDisks[2].sizeGb, 'mountPath': input.additionalDisks[2].mountPath}] : [])}
+  hostname: ${to_lower(input.vmName)}
+  namespace: ${input.namespaceName}
+  storageClass: ${input.storageClass}
+  linuxVersion: ${input.linuxImage == 'vmi-ef05b52bea20be301' ? 'Ubuntu Server 22.04':input.linuxImage == 'ubuntu-2404' ? 'Ubuntu Server 24.04':'Unknown Linux version'}
+  fqdn: ${variable.hostname}.${propgroup.domainName.dnsZone}
+  dnsZone: ${propgroup.domainName.dnsZone}
+  dnsServer01: ${propgroup.dnsServers.dnsServer01}
+  isPrivateSubnet: ${input.subnetName == 'subnet-vm-app-private'}
+  sshServiceName: ${variable.hostname}-service-ssh
+  commonLabels:
+    app.kubernetes.io/name: ubuntu-vm
+    app.kubernetes.io/instance: ${variable.hostname}
+    vcf.vm/vmName: ${variable.hostname}
+    vcf.vm/owner: ${split(env.requestedBy, '@')[0]}
+  commonAnnotations:
+    vcf.vm/requestedBy: ${env.requestedBy}
+    vcf.vm/dnsZone: ${variable.dnsZone}
+    vcf.vm/subnetName: ${input.subnetName}
+resources:
+  SupervisorNamespace:
+    type: CCI.Supervisor.Namespace
+    properties:
+      name: ${variable.namespace}
+      existing: true
+  SshService:
+    type: CCI.Supervisor.Resource
+    properties:
+      count: ${variable.isPrivateSubnet ? 1:0}
+      context: ${resource.SupervisorNamespace.id}
+      manifest:
+        apiVersion: vmoperator.vmware.com/v1alpha3
+        kind: VirtualMachineService
+        metadata:
+          name: ${variable.sshServiceName}
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+        spec:
+          type: LoadBalancer
+          selector:
+            app.kubernetes.io/instance: ${variable.hostname}
+          ports:
+            - name: ssh
+              port: 22
+              protocol: TCP
+              targetPort: 22
+  BootstrapSecret:
+    type: CCI.Supervisor.Resource
+    properties:
+      context: ${resource.SupervisorNamespace.id}
+      manifest:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: vm-${variable.hostname}-bootstrap
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+        type: Opaque
+        stringData:
+          adminPassword: ${secret.linux-admin-password}
+  DataDiskPVC01:
+    type: CCI.Supervisor.Resource
+    properties:
+      count: ${length(variable.dataDisks) > 0 ? 1:0}
+      context: ${resource.SupervisorNamespace.id}
+      manifest:
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        metadata:
+          name: pvc-${variable.hostname}-data01
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+          annotations:
+            vcf.vm/disk.deviceName: ${length(variable.dataDisks) > 0 ? variable.dataDisks[0].deviceName:''}
+            vcf.vm/disk.mountPath: ${length(variable.dataDisks) > 0 ? variable.dataDisks[0].mountPath:''}
+            vcf.vm/disk.filesystem: ext4
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          volumeMode: Block
+          storageClassName: ${variable.storageClass}
+          resources:
+            requests:
+              storage: ${length(variable.dataDisks) > 0 ? format('%dGi', variable.dataDisks[0].sizeGb):'1Gi'}
+  DataDiskPVC02:
+    type: CCI.Supervisor.Resource
+    properties:
+      count: ${length(variable.dataDisks) > 1 ? 1:0}
+      context: ${resource.SupervisorNamespace.id}
+      manifest:
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        metadata:
+          name: pvc-${variable.hostname}-data02
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+          annotations:
+            vcf.vm/disk.deviceName: ${length(variable.dataDisks) > 1 ? variable.dataDisks[1].deviceName:''}
+            vcf.vm/disk.mountPath: ${length(variable.dataDisks) > 1 ? variable.dataDisks[1].mountPath:''}
+            vcf.vm/disk.filesystem: ext4
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          volumeMode: Block
+          storageClassName: ${variable.storageClass}
+          resources:
+            requests:
+              storage: ${length(variable.dataDisks) > 1 ? format('%dGi', variable.dataDisks[1].sizeGb):'1Gi'}
+  DataDiskPVC03:
+    type: CCI.Supervisor.Resource
+    properties:
+      count: ${length(variable.dataDisks) > 2 ? 1:0}
+      context: ${resource.SupervisorNamespace.id}
+      manifest:
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        metadata:
+          name: pvc-${variable.hostname}-data03
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+          annotations:
+            vcf.vm/disk.deviceName: ${length(variable.dataDisks) > 2 ? variable.dataDisks[2].deviceName:''}
+            vcf.vm/disk.mountPath: ${length(variable.dataDisks) > 2 ? variable.dataDisks[2].mountPath:''}
+            vcf.vm/disk.filesystem: ext4
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          volumeMode: Block
+          storageClassName: ${variable.storageClass}
+          resources:
+            requests:
+              storage: ${length(variable.dataDisks) > 2 ? format('%dGi', variable.dataDisks[2].sizeGb):'1Gi'}
+  UbuntuVM:
+    type: CCI.Supervisor.Resource
+    dependsOn:
+      - BootstrapSecret
+      - DataDiskPVC01
+      - DataDiskPVC02
+      - DataDiskPVC03
+    properties:
+      context: ${resource.SupervisorNamespace.id}
+      wait:
+        conditions:
+          - type: VirtualMachineCreated
+            status: 'True'
+          - type: VirtualMachineNetworkReady
+            status: 'True'
+          - type: VirtualMachineTools
+            status: 'True'
+          - type: GuestCustomization
+            status: 'True'
+      manifest:
+        apiVersion: vmoperator.vmware.com/v1alpha3
+        kind: VirtualMachine
+        metadata:
+          name: ${variable.hostname}
+          namespace: ${variable.namespace}
+          labels: ${variable.commonLabels}
+          annotations: ${variable.commonAnnotations}
+        spec:
+          className: ${input.vmClass}
+          imageName: ${input.linuxImage}
+          storageClass: ${variable.storageClass}
+          powerState: PoweredOn
+          volumes: '${(length(variable.dataDisks) > 0 ? [{''name'': ''data01'', ''persistentVolumeClaim'': {''claimName'': ''pvc-'' + variable.hostname + ''-data01''}}] : []) + (length(variable.dataDisks) > 1 ? [{''name'': ''data02'', ''persistentVolumeClaim'': {''claimName'': ''pvc-'' + variable.hostname + ''-data02''}}] : []) + (length(variable.dataDisks) > 2 ? [{''name'': ''data03'', ''persistentVolumeClaim'': {''claimName'': ''pvc-'' + variable.hostname + ''-data03''}}] : [])}'
+          network:
+            interfaces:
+              - name: eth0
+                network:
+                  name: ${input.subnetName}
+                  kind: Subnet
+            hostName: ${variable.hostname}
+            domainName: ${variable.dnsZone}
+            nameservers:
+              - ${variable.dnsServer01}
+            searchDomains:
+              - ${variable.dnsZone}
+          bootstrap:
+            cloudInit:
+              cloudConfig:
+                #cloud-config
+                package_update: true
+                packages:
+                  - openssh-server
+                  - e2fsprogs
+                  - util-linux
+                disable_root: false
+                ssh_pwauth: true
+                users:
+                  - name: ${input.adminUsername}
+                    shell: /bin/bash
+                    lock_passwd: false
+                    sudo: ALL=(ALL) ALL
+                    passwd:
+                      name: vm-${variable.hostname}-bootstrap
+                      key: adminPassword
+                write_files:
+                  - path: /etc/vcf-data-disks/mount01
+                    owner: root:root
+                    permissions: '0600'
+                    content: ${length(variable.dataDisks) > 0 ? variable.dataDisks[0].mountPath:''}
+                  - path: /etc/vcf-data-disks/mount02
+                    owner: root:root
+                    permissions: '0600'
+                    content: ${length(variable.dataDisks) > 1 ? variable.dataDisks[1].mountPath:''}
+                  - path: /etc/vcf-data-disks/mount03
+                    owner: root:root
+                    permissions: '0600'
+                    content: ${length(variable.dataDisks) > 2 ? variable.dataDisks[2].mountPath:''}
+                runcmd:
+                  - |
+                    set -eu
+                    fail() { echo "Data disk setup: $*" >&2; exit 1; }
+
+                    # Mount paths are read as data, never interpolated into shell commands.
+                    for index in $(seq 1 ${length(variable.dataDisks)}); do
+                      case "$index" in
+                        1) disk=/dev/sdb ;;
+                        2) disk=/dev/sdc ;;
+                        3) disk=/dev/sdd ;;
+                      esac
+                      mount_path="$(cat "/etc/vcf-data-disks/mount0$index")"
+                      case "$mount_path" in
+                        /*) ;;
+                        *) fail "Disk $index requires an absolute mount path" ;;
+                      esac
+                      mount_path="$(realpath -m -- "$mount_path")"
+                      echo "Data disk setup: preparing $disk at $mount_path"
+
+                      attempts=0
+                      until [ -b "$disk" ]; do
+                        attempts=$((attempts + 1))
+                        [ "$attempts" -le 60 ] || fail "$disk did not appear"
+                        sleep 1
+                      done
+                      # Never format a disk with partitions, LVM, or other dependent devices.
+                      [ "$(lsblk -nrpo NAME "$disk" | wc -l)" -eq 1 ] ||
+                        fail "$disk has partitions or dependent devices"
+                      fs_type="$(lsblk -dnro FSTYPE "$disk")"
+                      if [ -z "$fs_type" ]; then
+                        [ -z "$(lsblk -nrpo MOUNTPOINT "$disk" | tr -d '[:space:]')" ] ||
+                          fail "$disk is already in use"
+                        signatures="$(wipefs -n --noheadings --output TYPE "$disk")"
+                        [ -z "$signatures" ] ||
+                          fail "$disk has existing signatures"
+                        mkfs.ext4 -F "$disk"
+                      else
+                        [ "$fs_type" = ext4 ] || fail "$disk contains an unsupported filesystem: $fs_type"
+                      fi
+                      uuid="$(blkid -s UUID -o value "$disk")"
+                      [ -n "$uuid" ] || fail "No filesystem UUID for $disk"
+
+                      if mountpoint -q -- "$mount_path"; then
+                        [ "$(findmnt -nro UUID --mountpoint "$mount_path")" = "$uuid" ] ||
+                          fail "$mount_path is already mounted from another disk"
+                      else
+                        [ -z "$(lsblk -nrpo MOUNTPOINT "$disk" | tr -d '[:space:]')" ] ||
+                          fail "$disk is already mounted elsewhere"
+                        mkdir -p -- "$mount_path"
+                        [ -z "$(find "$mount_path" -mindepth 1 -maxdepth 1 -print -quit)" ] ||
+                          fail "$mount_path is not empty"
+                      fi
+
+                      # Encode whitespace and backslashes for fstab, including paths with spaces.
+                      fstab_path="$(printf '%s' "$mount_path" | od -An -v -tu1 | awk '
+                        { for (i = 1; i <= NF; i++) {
+                            if ($i == 32 || $i == 9 || $i == 10 || $i == 13 || $i == 92)
+                              printf "\\%03o", $i;
+                            else printf "%c", $i;
+                        }}')"
+                      existing="$(VCF_FSTAB_PATH="$fstab_path" awk '$1 !~ /^#/ && $2 == ENVIRON["VCF_FSTAB_PATH"] {print $1}' /etc/fstab)"
+                      if [ -n "$existing" ]; then
+                        [ "$existing" = "UUID=$uuid" ] || fail "Conflicting fstab entry for $mount_path"
+                      else
+                        printf '\nUUID=%s %s ext4 defaults,nofail 0 2\n' "$uuid" "$fstab_path" >> /etc/fstab
+                      fi
+                      if ! mountpoint -q -- "$mount_path"; then
+                        mount -- "$mount_path"
+                      fi
+                      [ "$(findmnt -nro UUID --mountpoint "$mount_path")" = "$uuid" ] ||
+                        fail "Mount verification failed for $mount_path"
+                      echo "Data disk setup: mounted $disk at $mount_path (UUID=$uuid)"
+                    done
+outputs:
+  additionalDisks:
+    value: ${variable.dataDisks}
+  dataDiskFilesystem:
+    value: ext4
+  runPostDeployment:
+    value: 'true'
+  hostname:
+    value: ${variable.hostname}
+  fqdn:
+    value: ${variable.fqdn}
+  namespace:
+    value: ${variable.namespace}
+  subnetName:
+    value: ${input.subnetName}
+  linuxVersion:
+    value: ${variable.linuxVersion}
+  network:
+    value: ${input.subnetName == 'subnet-vm-app-public' ? 'public':'private'}
+  ipAddress:
+    value: ${resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4:''}
+  sshServiceName:
+    value: ${variable.isPrivateSubnet ? variable.sshServiceName:'not-required'}
+  __deploymentOverview:
+    value: |-
+      ## Ubuntu VM Deployment
+
+      Your Ubuntu virtual machine deployment completed successfully.
+
+      #### Machine Summary
+
+      | Field | Value |
+      | --- | --- |
+      | VM Name | ${variable.hostname} |
+      | Operating System | ${variable.linuxVersion} |
+      | Image | ${input.linuxImage} |
+      | Requested By | ${env.requestedBy} |
+      | Namespace | ${variable.namespace} |
+      | VM Class | ${input.vmClass} |
+      | Storage Class | ${input.storageClass} |
+      | Additional Disks | ${length(variable.dataDisks)} |
+      | Data Filesystem | ext4 (persistent mounts by UUID) |
+
+      #### Network Summary
+
+      | Field | Value |
+      | --- | --- |
+      | FQDN | ${variable.fqdn} |
+      | Subnet | ${input.subnetName}  |
+      | Access Type | ${input.subnetName == 'subnet-vm-app-public' ? 'Public':'Private'}|
+      | DNS Zone | ${variable.dnsZone} |
+      | Name Servers | ${variable.dnsServer01} |
+      | VM Primary IP | ${resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4:'Pending IP assignment'} |
+      | Load Balancer Service | ${variable.isPrivateSubnet ? variable.sshServiceName:'Not required'} |
+
+      #### SSH Connection
+
+      ```console
+      ssh ${input.adminUsername}@${variable.fqdn}
+      ```
+postDeploymentPayload:
+  value:
+    vmName: ${variable.hostname}
+    fqdn: ${variable.fqdn}
+    namespace: ${variable.namespace}
+    osType: linux
+    linuxVersion: ${variable.linuxVersion}
+    workloadType: ubuntu-vm
+    requestedBy: ${env.requestedBy}
+    dnsZone: ${variable.dnsZone}
+    vmClass: ${input.vmClass}
+    storageClass: ${input.storageClass}
+    linuxImage: ${input.linuxImage}
+    additionalDisksRequested: ${length(variable.dataDisks) > 0}
+    additionalDisks: ${variable.dataDisks}
+    dataDiskFilesystem: ext4
+    subnetName: ${input.subnetName}
+    networkAccess: ${variable.isPrivateSubnet ? 'private-load-balancer':'public-direct'}
+    sshServiceName: ${variable.isPrivateSubnet ? variable.sshServiceName:'not-required'}
+    ipAddress: ${resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4:'Pending IP assignment'}
+    dnsRecord:
+      action: ${variable.isPrivateSubnet ? 'defer-until-load-balancer-ip':'create'}
+      type: A
+      name: ${variable.hostname}
+      zone: ${variable.dnsZone}
+      fqdn: ${variable.fqdn}
+      address: ${variable.isPrivateSubnet ? 'pending':resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4:'pending'}
+    labelPatch:
+      vcf.vm/ipAddress: ${resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4:'pending'}
+      vcf.vm/fqdn: ${variable.fqdn}
+    vCenterTags:
+      app.kubernetes.io/name: ubuntu-vm
+      app.kubernetes.io/instance: ${variable.hostname}
+      vcf.vm/vmName: ${variable.hostname}
+      vcf.vm/owner: ${split(env.requestedBy, '@')[0]}
+

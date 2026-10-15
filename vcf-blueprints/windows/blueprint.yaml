@@ -120,7 +120,7 @@ inputs:
       - title: Web Server
         const: WB
 variables:
-  orgName: ${propgroup.org.orgName}
+  orgName: "<TO_BE_CHANGED>"
   hostname: ${to_lower(input.vmName)}
   namespace: ${input.namespaceName}
   storageClass: ${input.storageClass}

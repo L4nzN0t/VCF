@@ -1,11 +1,11 @@
 formatVersion: 2
-name: Test Server
+name: Linux Server
 version: 1
 inputs:
   vmName:
     type: string
     title: Server Name
-    description: Lowercase DNS-safe name for the SFTP endpoint.
+    description: Lowercase DNS-safe name for the endpoint.
     minLength: 3
     maxLength: 15
     pattern: ^[a-z][a-z0-9-]{1,13}[a-z0-9]$
@@ -23,24 +23,32 @@ inputs:
     title: Virtual Machine Size
     description: Select an allowed VM class for the target namespace.
     $data: /data/virtualmachineclasses?namespace={{namespaceName}}
+  ipAddress:
+    type: string
+    title: IP Address
+    description: IP Address in CIDR notation
+    pattern: ^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(?:[0-9]|[12][0-9]|3[0-2])$
+  gwAddress:
+    type: string
+    title: Gateway Address
+    description: Gateway IP Address
+    pattern: ^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$
   subnetName:
     type: string
     title: Virtual Machine Subnet
     description: Existing Supervisor Subnet resource used by the VM network interface.
-    default: subnet-vm-app-private
+    default: subnet-public-test
     oneOf:
       - title: Public
-        const: subnet-vm-app-public
-      - title: Private
-        const: subnet-vm-app-private
+        const: subnet-public-test
   linuxImage:
     type: string
     title: Linux Image
     description: Supervisor VM image name for the Linux guest.
-    default: vmi-4dcd43492500fbe61
+    default: vmi-ef05b52bea20be301
     oneOf:
       - title: Ubuntu Server 22.04
-        const: vmi-4dcd43492500fbe61
+        const: vmi-ef05b52bea20be301
       - title: Ubuntu Server 24.04
         const: ubuntu-2404
   adminUsername:
@@ -54,7 +62,7 @@ variables:
   hostname: ${to_lower(input.vmName)}
   namespace: ${input.namespaceName}
   storageClass: ${input.storageClass}
-  linuxVersion: ${input.linuxImage == 'vmi-4dcd43492500fbe61' ? 'Ubuntu Server 22.04':input.linuxImage == 'ubuntu-2404' ? 'Ubuntu Server 24.04':'Unknown Linux version'}
+  linuxVersion: ${input.linuxImage == 'vmi-ef05b52bea20be301' ? 'Ubuntu Server 24.04':input.linuxImage == 'ubuntu-2204' ? 'Ubuntu Server 22.04':'Unknown Linux version'}
   fqdn: ${variable.hostname}.${propgroup.domainName.dnsZone}
   dnsZone: ${propgroup.domainName.dnsZone}
   dnsServer01: ${propgroup.dnsServers.dnsServer01}
@@ -143,8 +151,13 @@ resources:
             interfaces:
               - name: eth0
                 network:
+                  apiVersion: crd.nsx.vmware.com/v1alpha1
                   name: ${input.subnetName}
                   kind: Subnet
+                dhcp4: false
+                gateway4: ${input.gwAddress}
+                addresses:
+                  - ${input.ipAddress}
             hostName: ${variable.hostname}
             domainName: ${variable.dnsZone}
             nameservers:
@@ -169,6 +182,8 @@ resources:
                       name: vm-${variable.hostname}-bootstrap
                       key: adminPassword
 outputs:
+  runPostDeployment:
+    value: 'true'
   hostname:
     value: ${variable.hostname}
   fqdn:
@@ -179,14 +194,12 @@ outputs:
     value: ${input.subnetName}
   linuxVersion:
     value: ${variable.linuxVersion}
-  networkAccess:
-    value: ${variable.isPrivateSubnet ? 'private-load-balancer':'public-direct'}
+  network:
+    value: ${input.subnetName == 'subnet-vm-app-public' ? 'public':'private'}
   ipAddress:
-    value: ${resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4:'Pending IP assignment'}
+    value: ${resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4:''}
   sshServiceName:
     value: ${variable.isPrivateSubnet ? variable.sshServiceName:'not-required'}
-  sshEndpoint:
-    value: ${variable.isPrivateSubnet ? variable.sshServiceName + ':22':resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4 + ':22':'Pending IP assignment'}
   __deploymentOverview:
     value: |-
       ## Ubuntu VM Deployment
@@ -210,8 +223,8 @@ outputs:
       | Field | Value |
       | --- | --- |
       | FQDN | ${variable.fqdn} |
-      | Subnet | ${input.subnetName} |
-      | Access Type | ${variable.isPrivateSubnet ? 'Private subnet through load balancer':'Direct public subnet access'} |
+      | Subnet | ${input.subnetName}  |
+      | Access Type | ${input.subnetName == 'subnet-vm-app-public' ? 'Public':'Private'}|
       | DNS Zone | ${variable.dnsZone} |
       | Name Servers | ${variable.dnsServer01} |
       | VM Primary IP | ${resource.UbuntuVM.object.status.network.primaryIP4 != null ? resource.UbuntuVM.object.status.network.primaryIP4:'Pending IP assignment'} |
@@ -220,7 +233,7 @@ outputs:
       #### SSH Connection
 
       ```console
-      $ ssh ${input.adminUsername}@${variable.fqdn}
+      ssh ${input.adminUsername}@${variable.fqdn}
       ```
 postDeploymentPayload:
   value:
